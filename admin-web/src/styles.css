@@ -153,18 +153,21 @@ dd {
   padding-top: 14px;
 }
 
+.file-entry {
+  border-bottom: 1px solid #edf1f2;
+  padding: 8px 0;
+}
+
+.file-entry:last-child {
+  border-bottom: 0;
+}
+
 .file-row {
   align-items: center;
-  border-bottom: 1px solid #edf1f2;
   display: flex;
   gap: 12px;
   justify-content: space-between;
   min-height: 54px;
-  padding: 8px 0;
-}
-
-.file-row:last-child {
-  border-bottom: 0;
 }
 
 .file-info {
@@ -176,6 +179,52 @@ dd {
 .file-info strong,
 .file-info span {
   overflow-wrap: anywhere;
+}
+
+.file-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.media-preview,
+.image-preview,
+.pdf-preview {
+  display: block;
+  margin-top: 10px;
+  width: 100%;
+}
+
+.media-preview {
+  max-height: 480px;
+}
+
+.image-preview {
+  height: auto;
+  max-height: 560px;
+  object-fit: contain;
+}
+
+.pdf-preview {
+  border: 1px solid #dde5e8;
+  height: 520px;
+}
+
+@media (max-width: 600px) {
+  .file-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .file-actions {
+    justify-content: flex-start;
+  }
+
+  .pdf-preview {
+    height: 420px;
+  }
 }
 
 .file-info span {

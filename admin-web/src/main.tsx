@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
@@ -80,16 +80,39 @@ function formatFileSize(size: number | null): string {
   return `${(size / 1024 / 1024).toFixed(1)} МБ`;
 }
 
+type PreviewKind = "audio" | "video" | "image" | "pdf" | null;
+
+function getPreviewKind(file: ApplicationFile): PreviewKind {
+  const mimeType = file.mime_type ?? "";
+  if (file.file_type === "audio" || file.file_type === "voice" || mimeType.startsWith("audio/")) {
+    return "audio";
+  }
+  if (file.file_type === "video" || mimeType.startsWith("video/")) return "video";
+  if (file.file_type === "photo" || mimeType.startsWith("image/")) return "image";
+  if (mimeType === "application/pdf" || file.file_name?.toLowerCase().endsWith(".pdf")) return "pdf";
+  return null;
+}
+
+function getPreviewButtonLabel(kind: PreviewKind): string {
+  return kind === "audio" ? "Слушать" : "Смотреть";
+}
+
 function App() {
   const [applications, setApplications] = useState<Application[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [comments, setComments] = useState<Record<number, string>>({});
+  const [previewUrls, setPreviewUrls] = useState<Record<number, string>>({});
+  const [loadingPreviews, setLoadingPreviews] = useState<Set<number>>(new Set());
+  const previewUrlsRef = useRef<Record<number, string>>({});
   const initData = useMemo(() => window.Telegram?.WebApp?.initData ?? "", []);
 
   useEffect(() => {
     window.Telegram?.WebApp?.ready();
     window.Telegram?.WebApp?.expand();
+    return () => {
+      Object.values(previewUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
+    };
   }, []);
 
   async function loadApplications() {
@@ -169,6 +192,33 @@ function App() {
     URL.revokeObjectURL(objectUrl);
   }
 
+  async function loadPreview(applicationId: number, file: ApplicationFile) {
+    if (previewUrls[file.id] || loadingPreviews.has(file.id)) return;
+    setError(null);
+    setLoadingPreviews((current) => new Set(current).add(file.id));
+
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/applications/${applicationId}/files/${file.id}/download`,
+        { headers: authHeaders(initData) },
+      );
+      if (!response.ok) {
+        setError(`Не удалось открыть вложение: ${response.status}`);
+        return;
+      }
+
+      const objectUrl = URL.createObjectURL(await response.blob());
+      previewUrlsRef.current[file.id] = objectUrl;
+      setPreviewUrls((current) => ({ ...current, [file.id]: objectUrl }));
+    } finally {
+      setLoadingPreviews((current) => {
+        const next = new Set(current);
+        next.delete(file.id);
+        return next;
+      });
+    }
+  }
+
   useEffect(() => {
     void loadApplications();
   }, []);
@@ -216,25 +266,54 @@ function App() {
             {item.files.length > 0 && (
               <div className="attachments">
                 <h2>Вложения</h2>
-                {item.files.map((file) => (
-                  <div className="file-row" key={file.id}>
-                    <div className="file-info">
-                      <strong>{file.file_name ?? fileTypeLabels[file.file_type] ?? "Вложение"}</strong>
-                      <span>
-                        {fileTypeLabels[file.file_type] ?? file.file_type}
-                        {file.file_size ? ` · ${formatFileSize(file.file_size)}` : ""}
-                      </span>
-                      {file.caption && <span>{file.caption}</span>}
+                {item.files.map((file) => {
+                  const previewKind = getPreviewKind(file);
+                  const previewUrl = previewUrls[file.id];
+                  return (
+                    <div className="file-entry" key={file.id}>
+                      <div className="file-row">
+                        <div className="file-info">
+                          <strong>{file.file_name ?? fileTypeLabels[file.file_type] ?? "Вложение"}</strong>
+                          <span>
+                            {fileTypeLabels[file.file_type] ?? file.file_type}
+                            {file.file_size ? ` · ${formatFileSize(file.file_size)}` : ""}
+                          </span>
+                          {file.caption && <span>{file.caption}</span>}
+                        </div>
+                        <div className="file-actions">
+                          {file.url ? (
+                            <a className="link-button" href={file.url} target="_blank" rel="noreferrer">
+                              Открыть
+                            </a>
+                          ) : (
+                            <>
+                              {previewKind && !previewUrl && (
+                                <button onClick={() => loadPreview(item.id, file)}>
+                                  {loadingPreviews.has(file.id)
+                                    ? "Загрузка..."
+                                    : getPreviewButtonLabel(previewKind)}
+                                </button>
+                              )}
+                              <button onClick={() => downloadFile(item.id, file)}>Скачать</button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      {previewUrl && previewKind === "audio" && (
+                        <audio className="media-preview" controls src={previewUrl} />
+                      )}
+                      {previewUrl && previewKind === "video" && (
+                        <video className="media-preview" controls src={previewUrl} />
+                      )}
+                      {previewUrl && previewKind === "image" && (
+                        <img className="image-preview" src={previewUrl} alt={file.file_name ?? "Вложение"} />
+                      )}
+                      {previewUrl && previewKind === "pdf" && (
+                        <iframe className="pdf-preview" src={previewUrl} title={file.file_name ?? "PDF"} />
+                      )}
                     </div>
-                    {file.url ? (
-                      <a className="link-button" href={file.url} target="_blank" rel="noreferrer">
-                        Открыть
-                      </a>
-                    ) : (
-                      <button onClick={() => downloadFile(item.id, file)}>Скачать</button>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
             {item.status === "pending" && (
