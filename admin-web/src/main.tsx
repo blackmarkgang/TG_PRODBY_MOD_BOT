@@ -1,12 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  Check,
   Download,
   ExternalLink,
   Eye,
   FileText,
+  Hash,
+  Plus,
   Play,
   RefreshCw,
+  Save,
   Settings,
   Users,
 } from "lucide-react";
@@ -63,6 +67,15 @@ type Participant = {
   created_at: string;
   roles: Role[];
   latest_application_status: string | null;
+};
+
+type Topic = {
+  id: number;
+  chat_id: number;
+  message_thread_id: number;
+  title: string;
+  is_protected: boolean;
+  allowed_roles: Role[];
 };
 
 type Tab = "applications" | "participants" | "settings";
@@ -145,6 +158,12 @@ function App() {
   const [applications, setApplications] = useState<Application[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
+  const [topics, setTopics] = useState<Topic[]>([]);
+  const [selectedTopicId, setSelectedTopicId] = useState<number | null>(null);
+  const [topicRoleDrafts, setTopicRoleDrafts] = useState<Record<number, string[]>>({});
+  const [topicTitleDrafts, setTopicTitleDrafts] = useState<Record<number, string>>({});
+  const [newTopicId, setNewTopicId] = useState("");
+  const [newTopicTitle, setNewTopicTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [comments, setComments] = useState<Record<number, string>>({});
@@ -166,13 +185,14 @@ function App() {
   async function loadAll() {
     setError(null);
     const headers = authHeaders(initData);
-    const [applicationsResponse, participantsResponse, rolesResponse] = await Promise.all([
+    const [applicationsResponse, participantsResponse, rolesResponse, topicsResponse] = await Promise.all([
       fetch(`${apiBaseUrl}/applications`, { headers }),
       fetch(`${apiBaseUrl}/participants`, { headers }),
       fetch(`${apiBaseUrl}/participants/roles`, { headers }),
+      fetch(`${apiBaseUrl}/settings/topics`, { headers }),
     ]);
 
-    const failedResponse = [applicationsResponse, participantsResponse, rolesResponse].find(
+    const failedResponse = [applicationsResponse, participantsResponse, rolesResponse, topicsResponse].find(
       (response) => !response.ok,
     );
     if (failedResponse) {
@@ -183,6 +203,11 @@ function App() {
     setApplications(await applicationsResponse.json());
     setParticipants(await participantsResponse.json());
     setRoles(await rolesResponse.json());
+    const loadedTopics: Topic[] = await topicsResponse.json();
+    setTopics(loadedTopics);
+    setTopicRoleDrafts(Object.fromEntries(loadedTopics.map((topic) => [topic.id, topic.allowed_roles.map((role) => role.code)])));
+    setTopicTitleDrafts(Object.fromEntries(loadedTopics.map((topic) => [topic.id, topic.title])));
+    setSelectedTopicId((current) => current ?? loadedTopics[0]?.id ?? null);
   }
 
   async function review(id: number, action: "approve" | "reject") {
@@ -253,6 +278,75 @@ function App() {
     await loadAll();
   }
 
+  function toggleTopicRole(topicId: number, roleCode: string) {
+    setTopicRoleDrafts((current) => {
+      const selected = new Set(current[topicId] ?? []);
+      if (selected.has(roleCode)) selected.delete(roleCode);
+      else selected.add(roleCode);
+      return { ...current, [topicId]: Array.from(selected) };
+    });
+  }
+
+  async function saveTopicPermissions(topic: Topic) {
+    setError(null);
+    setFeedback(null);
+    const headers = { ...authHeaders(initData), "Content-Type": "application/json" };
+    const title = topicTitleDrafts[topic.id]?.trim();
+    if (!title) {
+      setError("Укажите название темы.");
+      return;
+    }
+
+    if (title !== topic.title) {
+      const titleResponse = await fetch(`${apiBaseUrl}/settings/topics/${topic.id}`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ title }),
+      });
+      if (!titleResponse.ok) {
+        setError(`Не удалось переименовать тему: ${await getApiError(titleResponse)}`);
+        return;
+      }
+    }
+
+    const rolesResponse = await fetch(`${apiBaseUrl}/settings/topics/${topic.id}/roles`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ role_codes: topicRoleDrafts[topic.id] ?? [] }),
+    });
+    if (!rolesResponse.ok) {
+      setError(`Не удалось сохранить права: ${await getApiError(rolesResponse)}`);
+      return;
+    }
+    setFeedback("Права темы сохранены.");
+    await loadAll();
+  }
+
+  async function createTopic() {
+    setError(null);
+    setFeedback(null);
+    const messageThreadId = Number(newTopicId);
+    if (!Number.isInteger(messageThreadId) || messageThreadId <= 0 || !newTopicTitle.trim()) {
+      setError("Укажите корректный ID и название темы.");
+      return;
+    }
+    const response = await fetch(`${apiBaseUrl}/settings/topics`, {
+      method: "POST",
+      headers: { ...authHeaders(initData), "Content-Type": "application/json" },
+      body: JSON.stringify({ message_thread_id: messageThreadId, title: newTopicTitle.trim() }),
+    });
+    if (!response.ok) {
+      setError(`Не удалось добавить тему: ${await getApiError(response)}`);
+      return;
+    }
+    const topic: Topic = await response.json();
+    setNewTopicId("");
+    setNewTopicTitle("");
+    setSelectedTopicId(topic.id);
+    setFeedback("Тема добавлена. Теперь выберите разрешенные роли.");
+    await loadAll();
+  }
+
   async function fetchFile(applicationId: number, file: ApplicationFile): Promise<Blob | null> {
     const response = await fetch(
       `${apiBaseUrl}/applications/${applicationId}/files/${file.id}/download`,
@@ -296,11 +390,13 @@ function App() {
     }
   }
 
+  const selectedTopic = topics.find((topic) => topic.id === selectedTopicId) ?? null;
+
   return (
     <main className="shell">
       <header className="app-header">
         <div className="brand-block">
-          <h1>Prod.by</h1>
+          <h1>PROD<b className="brand-dot">.</b>BY</h1>
           <span>Панель управления</span>
         </div>
         <button className="icon-button" onClick={loadAll} title="Обновить данные" aria-label="Обновить данные">
@@ -445,7 +541,76 @@ function App() {
       )}
 
       {activeTab === "settings" && (
-        <section className="soon-state"><Settings size={36} /><strong>SOON</strong><span>Настройки появятся в следующей версии.</span></section>
+        <section className="section-content">
+          <div className="section-heading">
+            <div><h2>Права тем</h2><p>Роли, которым разрешено публиковать сообщения</p></div>
+            <span className="count">{topics.length}</span>
+          </div>
+
+          <div className="topic-settings">
+            <div className="topic-list" aria-label="Темы группы">
+              {topics.map((topic) => (
+                <button
+                  className={`topic-item ${selectedTopicId === topic.id ? "active" : ""}`}
+                  key={topic.id}
+                  onClick={() => setSelectedTopicId(topic.id)}
+                >
+                  <Hash size={18} />
+                  <span><strong>{topic.title}</strong><small>ID {topic.message_thread_id}</small></span>
+                  <em>{topic.allowed_roles.length || "Все"}</em>
+                </button>
+              ))}
+              {topics.length === 0 && <div className="empty compact">Темы появятся после новых сообщений в группе.</div>}
+            </div>
+
+            <div className="topic-editor">
+              {selectedTopic ? (
+                <>
+                  <div className="editor-heading">
+                    <div><span>Настройка темы</span><strong>{selectedTopic.title}</strong></div>
+                    <Hash size={22} />
+                  </div>
+                  <label htmlFor={`topic-title-${selectedTopic.id}`}>Название в панели</label>
+                  <input
+                    id={`topic-title-${selectedTopic.id}`}
+                    value={topicTitleDrafts[selectedTopic.id] ?? selectedTopic.title}
+                    onChange={(event) => setTopicTitleDrafts((current) => ({ ...current, [selectedTopic.id]: event.target.value }))}
+                  />
+                  <div className="role-editor-heading">
+                    <strong>Кто может писать</strong>
+                    <span>Если ничего не выбрано, писать могут все</span>
+                  </div>
+                  <div className="role-options">
+                    {roles.map((role) => {
+                      const checked = (topicRoleDrafts[selectedTopic.id] ?? []).includes(role.code);
+                      return (
+                        <label className={checked ? "selected" : ""} key={role.code}>
+                          <input type="checkbox" checked={checked} onChange={() => toggleTopicRole(selectedTopic.id, role.code)} />
+                          <span className="check-box">{checked && <Check size={15} />}</span>
+                          <span>{role.title}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <button className="save-permissions" onClick={() => saveTopicPermissions(selectedTopic)}>
+                    <Save size={17} /> Сохранить права
+                  </button>
+                </>
+              ) : (
+                <div className="editor-empty"><Settings size={28} /><span>Выберите тему для настройки</span></div>
+              )}
+            </div>
+          </div>
+
+          <div className="manual-topic">
+            <div><strong>Добавить старую тему</strong><span>Для тем, которые бот еще не обнаружил</span></div>
+            <div className="manual-topic-form">
+              <input inputMode="numeric" placeholder="ID темы" value={newTopicId} onChange={(event) => setNewTopicId(event.target.value)} />
+              <input placeholder="Название темы" value={newTopicTitle} onChange={(event) => setNewTopicTitle(event.target.value)} />
+              <button className="icon-button" onClick={createTopic} title="Добавить тему" aria-label="Добавить тему"><Plus size={19} /></button>
+            </div>
+          </div>
+        </section>
       )}
     </main>
   );

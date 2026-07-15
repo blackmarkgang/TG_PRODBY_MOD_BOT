@@ -92,6 +92,13 @@ class ForumTopic(Base):
     is_protected: Mapped[bool] = mapped_column(Boolean, server_default="true", nullable=False)
 
 
+class TopicRolePermission(Base):
+    __tablename__ = "topic_role_permissions"
+
+    topic_id: Mapped[int] = mapped_column(ForeignKey("forum_topics.id", ondelete="CASCADE"), primary_key=True)
+    role_id: Mapped[int] = mapped_column(ForeignKey("community_roles.id", ondelete="CASCADE"), primary_key=True)
+
+
 class TopicWhitelist(Base):
     __tablename__ = "topic_whitelist"
     __table_args__ = (UniqueConstraint("topic_id", "user_id"),)
