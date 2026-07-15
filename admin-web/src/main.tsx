@@ -14,12 +14,23 @@ declare global {
   }
 }
 
+type ApplicationFile = {
+  id: number;
+  file_type: string;
+  file_name: string | null;
+  mime_type: string | null;
+  file_size: number | null;
+  url: string | null;
+  caption: string | null;
+};
+
 type Application = {
   id: number;
   status: string;
   age: number | null;
   music_role: string | null;
   answers: Record<string, string>;
+  files: ApplicationFile[];
   created_at: string;
   user: {
     telegram_id: number;
@@ -32,11 +43,39 @@ type Application = {
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 const devAdminId = import.meta.env.VITE_DEV_ADMIN_ID ?? "";
 
+const statusLabels: Record<string, string> = {
+  pending: "На рассмотрении",
+  approved: "Одобрена",
+  rejected: "Отклонена",
+};
+
+const answerLabels: Record<string, string> = {
+  role_details: "О себе и пользе для сообщества",
+  listener_artists: "Кого слушает",
+  listener_follows: "За кем следит",
+  listener_likes: "Что нравится в музыке",
+  motivation: "Почему хочет попасть в Prod.by",
+  expectations: "Ожидания от участия",
+};
+
+const fileTypeLabels: Record<string, string> = {
+  audio: "Аудио",
+  document: "Документ",
+  video: "Видео",
+  voice: "Голосовое сообщение",
+  photo: "Изображение",
+  url: "Ссылка",
+};
+
 function authHeaders(initData: string): Record<string, string> {
-  if (initData) {
-    return { Authorization: `tma ${initData}` };
-  }
+  if (initData) return { Authorization: `tma ${initData}` };
   return devAdminId ? { "X-Dev-Admin-ID": devAdminId } : {};
+}
+
+function formatFileSize(size: number | null): string {
+  if (size === null) return "";
+  if (size < 1024 * 1024) return `${Math.ceil(size / 1024)} КБ`;
+  return `${(size / 1024 / 1024).toFixed(1)} МБ`;
 }
 
 function App() {
@@ -55,7 +94,7 @@ function App() {
       headers: authHeaders(initData),
     });
     if (!response.ok) {
-      setError(`Failed to load applications: ${response.status}`);
+      setError(`Не удалось загрузить заявки: ${response.status}`);
       return;
     }
     setApplications(await response.json());
@@ -71,10 +110,30 @@ function App() {
       body: JSON.stringify({ comment: null }),
     });
     if (!response.ok) {
-      setError(`Failed to ${action}: ${response.status}`);
+      setError(`Не удалось изменить статус заявки: ${response.status}`);
       return;
     }
     await loadApplications();
+  }
+
+  async function downloadFile(applicationId: number, file: ApplicationFile) {
+    setError(null);
+    const response = await fetch(
+      `${apiBaseUrl}/applications/${applicationId}/files/${file.id}/download`,
+      { headers: authHeaders(initData) },
+    );
+    if (!response.ok) {
+      setError(`Не удалось скачать файл: ${response.status}`);
+      return;
+    }
+
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = file.file_name ?? `attachment-${file.id}`;
+    anchor.click();
+    URL.revokeObjectURL(objectUrl);
   }
 
   useEffect(() => {
@@ -85,47 +144,72 @@ function App() {
     <main className="shell">
       <header className="topbar">
         <div>
-          <h1>Prod.by Admin</h1>
-          <p>Applications queue</p>
+          <h1>Prod.by — администратор</h1>
+          <p>Заявки на вступление</p>
         </div>
-        <button onClick={loadApplications}>Refresh</button>
+        <button onClick={loadApplications}>Обновить</button>
       </header>
 
       {error && <div className="error">{error}</div>}
       {!initData && (
         <div className="notice">
-          Local development access. Telegram authentication will be used in the Mini App.
+          Локальный режим разработки. В Mini App будет использоваться авторизация Telegram.
         </div>
       )}
 
       <section className="grid">
+        {applications.length === 0 && <div className="empty">Заявок пока нет.</div>}
         {applications.map((item) => (
           <article className="card" key={item.id}>
             <div className="card-head">
-              <strong>#{item.id}</strong>
-              <span className={`status ${item.status}`}>{item.status}</span>
+              <strong>Заявка №{item.id}</strong>
+              <span className={`status ${item.status}`}>{statusLabels[item.status] ?? item.status}</span>
             </div>
             <div className="meta">
-              <span>{item.user.first_name ?? "Unknown"}</span>
-              <span>@{item.user.username ?? "no_username"}</span>
-              <span>{item.age ?? "-"} years</span>
-              <span>{item.music_role ?? "no role"}</span>
+              <span>{item.user.first_name ?? "Без имени"}</span>
+              <span>{item.user.username ? `@${item.user.username}` : "Без username"}</span>
+              <span>Возраст: {item.age ?? "не указан"}</span>
+              <span>Роль: {item.music_role ?? "не указана"}</span>
             </div>
             <dl>
               {Object.entries(item.answers).map(([key, value]) => (
                 <React.Fragment key={key}>
-                  <dt>{key}</dt>
+                  <dt>{answerLabels[key] ?? key}</dt>
                   <dd>{value}</dd>
                 </React.Fragment>
               ))}
             </dl>
+            {item.files.length > 0 && (
+              <div className="attachments">
+                <h2>Вложения</h2>
+                {item.files.map((file) => (
+                  <div className="file-row" key={file.id}>
+                    <div className="file-info">
+                      <strong>{file.file_name ?? fileTypeLabels[file.file_type] ?? "Вложение"}</strong>
+                      <span>
+                        {fileTypeLabels[file.file_type] ?? file.file_type}
+                        {file.file_size ? ` · ${formatFileSize(file.file_size)}` : ""}
+                      </span>
+                      {file.caption && <span>{file.caption}</span>}
+                    </div>
+                    {file.url ? (
+                      <a className="link-button" href={file.url} target="_blank" rel="noreferrer">
+                        Открыть
+                      </a>
+                    ) : (
+                      <button onClick={() => downloadFile(item.id, file)}>Скачать</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
             {item.status === "pending" && (
               <div className="actions">
                 <button className="approve" onClick={() => review(item.id, "approve")}>
-                  Approve
+                  Одобрить
                 </button>
                 <button className="reject" onClick={() => review(item.id, "reject")}>
-                  Reject
+                  Отклонить
                 </button>
               </div>
             )}

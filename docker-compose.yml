@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: prodby
       POSTGRES_USER: prodby
@@ -19,6 +20,7 @@ services:
     build:
       context: ./backend
     command: uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
     env_file:
       - .env
     ports:
@@ -33,6 +35,7 @@ services:
     build:
       context: ./backend
     command: python -m app.bot.main
+    restart: unless-stopped
     env_file:
       - .env
     volumes:
@@ -57,6 +60,7 @@ services:
     image: node:24-alpine
     working_dir: /app
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    restart: unless-stopped
     environment:
       VITE_API_BASE_URL: http://localhost:8000
       VITE_DEV_ADMIN_ID: ${DEV_ADMIN_ID:-1692840322}
@@ -64,8 +68,10 @@ services:
       - "5173:5173"
     volumes:
       - ./admin-web:/app
+      - admin_node_modules:/app/node_modules
     depends_on:
       - api
 
 volumes:
   postgres_data:
+  admin_node_modules:

@@ -43,8 +43,8 @@ async def moderate_forum_topic(message: Message) -> None:
     try:
         await message.bot.send_message(
             message.from_user.id,
-            "Posting in this topic is available only for approved authors. Contact the administration for access.",
+            "Публикация в этой теме доступна только одобренным авторам. "
+            "Чтобы получить доступ, обратитесь к администрации.",
         )
     except Exception:
         pass
-

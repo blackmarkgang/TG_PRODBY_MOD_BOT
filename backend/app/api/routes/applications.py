@@ -1,13 +1,18 @@
 from datetime import datetime, timezone
+from urllib.parse import quote
 
+import httpx
+from aiogram import Bot
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_admin
-from app.db.models import AdminUser, Application, AuditLog
+from app.core.config import settings
+from app.db.models import AdminUser, Application, ApplicationFile, AuditLog
 from app.db.session import get_session
 
 router = APIRouter()
@@ -23,7 +28,11 @@ async def list_applications(
     _: AdminUser = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
-    query = select(Application).options(selectinload(Application.user)).order_by(desc(Application.created_at))
+    query = (
+        select(Application)
+        .options(selectinload(Application.user), selectinload(Application.files))
+        .order_by(desc(Application.created_at))
+    )
     if status:
         query = query.where(Application.status == status)
 
@@ -37,6 +46,18 @@ async def list_applications(
             "music_role": item.music_role,
             "answers": item.answers_json,
             "created_at": item.created_at,
+            "files": [
+                {
+                    "id": file.id,
+                    "file_type": file.file_type,
+                    "file_name": file.file_name,
+                    "mime_type": file.mime_type,
+                    "file_size": file.file_size,
+                    "url": file.url,
+                    "caption": file.caption,
+                }
+                for file in item.files
+            ],
             "user": {
                 "telegram_id": item.user.telegram_id,
                 "username": item.user.username,
@@ -46,6 +67,64 @@ async def list_applications(
         }
         for item in applications
     ]
+
+
+@router.get("/{application_id}/files/{file_id}/download")
+async def download_application_file(
+    application_id: int,
+    file_id: int,
+    _: AdminUser = Depends(get_current_admin),
+    session: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    result = await session.execute(
+        select(ApplicationFile).where(
+            ApplicationFile.id == file_id,
+            ApplicationFile.application_id == application_id,
+        )
+    )
+    application_file = result.scalar_one_or_none()
+    if application_file is None or not application_file.telegram_file_id:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+
+    bot = Bot(settings.bot_token)
+    try:
+        telegram_file = await bot.get_file(application_file.telegram_file_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Telegram не вернул файл") from exc
+    finally:
+        await bot.session.close()
+
+    if not telegram_file.file_path:
+        raise HTTPException(status_code=502, detail="Telegram не вернул путь к файлу")
+
+    client = httpx.AsyncClient(timeout=60)
+    response = await client.send(
+        client.build_request(
+            "GET",
+            f"https://api.telegram.org/file/bot{settings.bot_token}/{telegram_file.file_path}",
+        ),
+        stream=True,
+    )
+    if not response.is_success:
+        await response.aclose()
+        await client.aclose()
+        raise HTTPException(status_code=502, detail="Не удалось скачать файл из Telegram")
+
+    async def stream_file():
+        try:
+            async for chunk in response.aiter_bytes():
+                yield chunk
+        finally:
+            await response.aclose()
+            await client.aclose()
+
+    file_name = application_file.file_name or f"attachment-{application_file.id}"
+    headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(file_name)}"}
+    return StreamingResponse(
+        stream_file(),
+        media_type=application_file.mime_type or "application/octet-stream",
+        headers=headers,
+    )
 
 
 @router.post("/{application_id}/approve")
@@ -86,4 +165,3 @@ async def reject_application(
     session.add(AuditLog(admin_id=admin.id, action="reject", entity_type="application", entity_id=application.id))
     await session.commit()
     return {"status": "rejected"}
-

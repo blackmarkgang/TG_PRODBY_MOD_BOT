@@ -46,6 +46,7 @@ class Application(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped[User] = relationship()
+    files: Mapped[list["ApplicationFile"]] = relationship(back_populates="application")
 
 
 class ApplicationFile(Base):
@@ -55,9 +56,14 @@ class ApplicationFile(Base):
     application_id: Mapped[int] = mapped_column(ForeignKey("applications.id"), nullable=False)
     telegram_file_id: Mapped[str | None] = mapped_column(String(256))
     file_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    file_name: Mapped[str | None] = mapped_column(String(255))
+    mime_type: Mapped[str | None] = mapped_column(String(128))
+    file_size: Mapped[int | None] = mapped_column(BigInteger)
     url: Mapped[str | None] = mapped_column(Text)
     caption: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    application: Mapped[Application] = relationship(back_populates="files")
 
 
 class CommunityRole(Base):
@@ -107,4 +113,3 @@ class AuditLog(Base):
     entity_id: Mapped[int | None] = mapped_column(Integer)
     payload_json: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-

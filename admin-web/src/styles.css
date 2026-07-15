@@ -42,6 +42,11 @@ h1 {
   margin: 0;
 }
 
+h2 {
+  font-size: 16px;
+  margin: 0 0 10px;
+}
+
 p {
   color: #5b6870;
   margin: 6px 0 0;
@@ -111,6 +116,59 @@ dd {
   white-space: pre-wrap;
 }
 
+.actions {
+  margin-top: 14px;
+}
+
+.attachments {
+  border-top: 1px solid #e5eaed;
+  padding-top: 14px;
+}
+
+.file-row {
+  align-items: center;
+  border-bottom: 1px solid #edf1f2;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 54px;
+  padding: 8px 0;
+}
+
+.file-row:last-child {
+  border-bottom: 0;
+}
+
+.file-info {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.file-info strong,
+.file-info span {
+  overflow-wrap: anywhere;
+}
+
+.file-info span {
+  color: #5b6870;
+  font-size: 13px;
+}
+
+.link-button {
+  border: 1px solid #cfd8dc;
+  border-radius: 8px;
+  color: #182026;
+  flex: 0 0 auto;
+  padding: 9px 13px;
+  text-decoration: none;
+}
+
+.empty {
+  color: #5b6870;
+  padding: 32px 0;
+}
+
 .approve {
   background: #198754;
   border-color: #198754;
@@ -137,4 +195,3 @@ dd {
 .notice {
   background: #cff4fc;
 }
-

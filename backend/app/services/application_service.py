@@ -2,7 +2,7 @@ from aiogram.types import User as TelegramUser
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Application, User
+from app.db.models import Application, ApplicationFile, User
 
 
 async def get_or_create_user(session: AsyncSession, tg_user: TelegramUser) -> User:
@@ -31,6 +31,7 @@ async def create_pending_application(
     age: int,
     music_role: str,
     answers: dict,
+    files: list[dict],
 ) -> Application:
     user = await get_or_create_user(session, tg_user)
     application = Application(
@@ -41,7 +42,9 @@ async def create_pending_application(
         answers_json=answers,
     )
     session.add(application)
+    await session.flush()
+    for file_data in files:
+        session.add(ApplicationFile(application_id=application.id, **file_data))
     await session.commit()
     await session.refresh(application)
     return application
-
