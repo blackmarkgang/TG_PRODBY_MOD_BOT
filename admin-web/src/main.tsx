@@ -30,6 +30,14 @@ type Application = {
 };
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const devAdminId = import.meta.env.VITE_DEV_ADMIN_ID ?? "";
+
+function authHeaders(initData: string): Record<string, string> {
+  if (initData) {
+    return { Authorization: `tma ${initData}` };
+  }
+  return devAdminId ? { "X-Dev-Admin-ID": devAdminId } : {};
+}
 
 function App() {
   const [applications, setApplications] = useState<Application[]>([]);
@@ -44,7 +52,7 @@ function App() {
   async function loadApplications() {
     setError(null);
     const response = await fetch(`${apiBaseUrl}/applications`, {
-      headers: { Authorization: `tma ${initData}` },
+      headers: authHeaders(initData),
     });
     if (!response.ok) {
       setError(`Failed to load applications: ${response.status}`);
@@ -57,7 +65,7 @@ function App() {
     const response = await fetch(`${apiBaseUrl}/applications/${id}/${action}`, {
       method: "POST",
       headers: {
-        Authorization: `tma ${initData}`,
+        ...authHeaders(initData),
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ comment: null }),
@@ -86,7 +94,7 @@ function App() {
       {error && <div className="error">{error}</div>}
       {!initData && (
         <div className="notice">
-          Open this page from Telegram Mini App to authenticate admin requests.
+          Local development access. Telegram authentication will be used in the Mini App.
         </div>
       )}
 
@@ -129,4 +137,3 @@ function App() {
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
-

@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://prodby:prodby@localhost:5432/prodby"
     sync_database_url: str = "postgresql+psycopg://prodby:prodby@localhost:5432/prodby"
     admin_ids_raw: str = Field(default="", alias="ADMIN_IDS")
+    dev_admin_id: int | None = None
     cors_origins_raw: str = Field(default="http://localhost:5173", alias="CORS_ORIGINS")
     public_webapp_url: str = "http://localhost:5173"
     api_base_url: str = "http://localhost:8000"
