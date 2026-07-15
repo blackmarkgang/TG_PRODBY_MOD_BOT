@@ -46,3 +46,24 @@ Backend runs as two processes:
 - `bot`: aiogram long-polling worker for Telegram.
 
 The project stores no secrets in Git. Use `.env`.
+
+## Backups and storage
+
+- Telegram attachments are not copied to the server. PostgreSQL stores their Telegram `file_id` and metadata.
+- The `backup` container creates a validated PostgreSQL custom-format dump in `backups/` immediately after startup and then once per day.
+- Dumps older than `BACKUP_RETENTION_DAYS` are removed automatically (14 days by default).
+- Docker JSON logs are rotated at 10 MB with three files retained per container.
+
+Create an additional backup immediately:
+
+```powershell
+docker compose run --rm backup sh /opt/backup/backup.sh --once
+```
+
+Validate a dump without restoring it:
+
+```powershell
+docker compose exec backup pg_restore --list /backups/prodby_TIMESTAMP.dump
+```
+
+The local `backups/` directory is on the same machine as the application. For production, copy this directory to independent storage because a VPS disk failure would otherwise remove both the database and its backups.

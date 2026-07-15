@@ -1,20 +1,27 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: prodby
-      POSTGRES_USER: prodby
-      POSTGRES_PASSWORD: prodby
+      POSTGRES_DB: ${POSTGRES_DB:-prodby}
+      POSTGRES_USER: ${POSTGRES_USER:-prodby}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-prodby}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U prodby -d prodby"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 3s
       retries: 10
+    logging: *default-logging
 
   api:
     build:
@@ -30,6 +37,7 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    logging: *default-logging
 
   bot:
     build:
@@ -43,6 +51,7 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    logging: *default-logging
 
   migrate:
     build:
@@ -55,6 +64,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    logging: *default-logging
 
   admin-web:
     image: node:24-alpine
@@ -71,6 +81,26 @@ services:
       - admin_node_modules:/app/node_modules
     depends_on:
       - api
+    logging: *default-logging
+
+  backup:
+    image: postgres:16-alpine
+    command: ["sh", "/opt/backup/backup.sh"]
+    restart: unless-stopped
+    environment:
+      PGHOST: postgres
+      PGDATABASE: ${POSTGRES_DB:-prodby}
+      PGUSER: ${POSTGRES_USER:-prodby}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-prodby}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+    volumes:
+      - ./backups:/backups
+      - ./ops/backup.sh:/opt/backup/backup.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *default-logging
 
 volumes:
   postgres_data:
