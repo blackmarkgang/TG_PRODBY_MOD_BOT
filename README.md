@@ -17,7 +17,8 @@ MVP for Telegram community applications, admin Mini App, roles, protected forum 
 1. Copy `.env.example` to `.env`.
 2. Put the BotFather token into `BOT_TOKEN`.
 3. Keep `ADMIN_IDS` as the initial owner/admin Telegram IDs.
-4. Start services:
+4. Set `MODERATION_TIMEOUT_SECONDS` to the group-wide timeout for posting in a restricted topic without a matching role (minimum 31 seconds, default 60).
+5. Start services:
 
 ```powershell
 docker compose up --build
@@ -45,4 +46,3 @@ Backend runs as two processes:
 - `bot`: aiogram long-polling worker for Telegram.
 
 The project stores no secrets in Git. Use `.env`.
-

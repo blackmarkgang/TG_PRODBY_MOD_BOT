@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     cors_origins_raw: str = Field(default="http://localhost:5173", alias="CORS_ORIGINS")
     public_webapp_url: str = "http://localhost:5173"
     api_base_url: str = "http://localhost:8000"
+    moderation_timeout_seconds: int = Field(default=60, ge=31, le=31_536_000)
 
     @cached_property
     def admin_ids(self) -> set[int]:

@@ -1,9 +1,11 @@
 import asyncio
 import html
 import logging
+import time
+from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot, Router
-from aiogram.types import Message
+from aiogram.types import ChatPermissions, Message
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
@@ -13,6 +15,7 @@ from app.db.session import SessionLocal
 
 router = Router()
 logger = logging.getLogger(__name__)
+moderation_cooldowns: dict[tuple[int, int], float] = {}
 
 
 async def delete_warning_later(bot: Bot, chat_id: int, message_id: int) -> None:
@@ -29,6 +32,46 @@ def get_topic_title(message: Message) -> str | None:
     if message.forum_topic_edited and message.forum_topic_edited.name:
         return message.forum_topic_edited.name
     return None
+
+
+def claim_moderation_action(chat_id: int, user_id: int) -> bool:
+    now = time.monotonic()
+    key = (chat_id, user_id)
+    if moderation_cooldowns.get(key, 0) > now:
+        return False
+    moderation_cooldowns[key] = now + 5
+    if len(moderation_cooldowns) > 1_000:
+        expired = [item for item, expires_at in moderation_cooldowns.items() if expires_at <= now]
+        for item in expired:
+            moderation_cooldowns.pop(item, None)
+    return True
+
+
+async def apply_role_timeout(message: Message) -> bool:
+    try:
+        await message.bot.restrict_chat_member(
+            chat_id=message.chat.id,
+            user_id=message.from_user.id,
+            permissions=ChatPermissions(
+                can_send_messages=False,
+                can_send_audios=False,
+                can_send_documents=False,
+                can_send_photos=False,
+                can_send_videos=False,
+                can_send_video_notes=False,
+                can_send_voice_notes=False,
+                can_send_polls=False,
+                can_send_other_messages=False,
+                can_add_web_page_previews=False,
+            ),
+            until_date=datetime.now(timezone.utc)
+            + timedelta(seconds=settings.moderation_timeout_seconds),
+            use_independent_chat_permissions=True,
+        )
+        return True
+    except Exception:
+        logger.exception("Failed to apply a timeout for topic permission violation")
+        return False
 
 
 @router.message()
@@ -123,6 +166,13 @@ async def moderate_forum_topic(message: Message) -> None:
     except Exception:
         logger.exception("Failed to delete a message without topic permission")
 
+    if not claim_moderation_action(message.chat.id, message.from_user.id):
+        return
+
+    timeout_applied = False
+    if user is None or not user.is_banned:
+        timeout_applied = await apply_role_timeout(message)
+
     display_name = html.escape(message.from_user.full_name)
     mention = f'<a href="tg://user?id={message.from_user.id}">{display_name}</a>'
     warning_text = (
@@ -135,6 +185,10 @@ async def moderate_forum_topic(message: Message) -> None:
         if user is not None and user.is_banned
         else f"{mention}, для этой темы нужна разрешенная роль."
     )
+    if timeout_applied:
+        warning_detail += (
+            f" Таймаут на отправку сообщений: <b>{settings.moderation_timeout_seconds} сек.</b>"
+        )
     try:
         warning = await message.bot.send_message(
             chat_id=message.chat.id,
