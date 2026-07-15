@@ -106,6 +106,13 @@ type AuditEntry = {
   entity_id: number | null;
   payload: Record<string, unknown>;
   admin_telegram_id: number | null;
+  actor: {
+    type: "admin" | "user" | "bot";
+    telegram_id: number | null;
+    username: string | null;
+    first_name: string | null;
+    last_name: string | null;
+  };
   created_at: string;
 };
 
@@ -205,13 +212,26 @@ function formatDate(value: string): string {
 }
 
 function formatLogDate(value: string): string {
-  return new Intl.DateTimeFormat("ru-RU", {
+  const date = new Date(value);
+  const datePart = new Intl.DateTimeFormat("ru-RU", {
     day: "2-digit",
     month: "2-digit",
+  }).format(date);
+  const timePart = new Intl.DateTimeFormat("ru-RU", {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-  }).format(new Date(value));
+  }).format(date);
+  return `${datePart} ${timePart}`;
+}
+
+function formatActor(entry: AuditEntry): string {
+  if (entry.actor.type === "bot") return "Бот";
+  const type = entry.actor.type === "admin" ? "Администратор" : "Пользователь";
+  const name = [entry.actor.first_name, entry.actor.last_name].filter(Boolean).join(" ");
+  const username = entry.actor.username ? `@${entry.actor.username}` : "";
+  const id = entry.actor.telegram_id ? `ID ${entry.actor.telegram_id}` : "";
+  return [type, name, username, id].filter(Boolean).join(" · ");
 }
 
 function getPreviewKind(file: ApplicationFile): PreviewKind {
@@ -1030,7 +1050,7 @@ function App() {
             {logs.map((entry) => (
               <div className="audit-row" key={entry.id}>
                 <time>{formatLogDate(entry.created_at)}</time>
-                <div><strong>{auditActionLabels[entry.action] ?? entry.action}</strong><span>{entry.admin_telegram_id ? `Администратор ${entry.admin_telegram_id}` : "Бот / пользователь"} · {entry.entity_type}{entry.entity_id ? ` #${entry.entity_id}` : ""}</span></div>
+                <div><strong>{auditActionLabels[entry.action] ?? entry.action}</strong><span>{formatActor(entry)} · {entry.entity_type}{entry.entity_id ? ` #${entry.entity_id}` : ""}</span></div>
                 <code>{Object.keys(entry.payload).length > 0 ? JSON.stringify(entry.payload) : "—"}</code>
               </div>
             ))}

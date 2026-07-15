@@ -364,8 +364,12 @@ dd {
 }
 
 .image-preview {
+  width: auto;
+  max-width: min(240px, 100%);
   height: auto;
-  max-height: 560px;
+  max-height: 180px;
+  border: 1px solid #333333;
+  border-radius: 4px;
   object-fit: contain;
 }
 

@@ -28,7 +28,17 @@ async def get_current_admin(
 
     telegram_user = json.loads(user_raw)
     telegram_id = int(telegram_user["id"])
-    return await find_active_admin(session, telegram_id)
+    admin = await find_active_admin(session, telegram_id)
+    profile = {
+        "username": telegram_user.get("username"),
+        "first_name": telegram_user.get("first_name"),
+        "last_name": telegram_user.get("last_name"),
+    }
+    if any(getattr(admin, field) != value for field, value in profile.items()):
+        for field, value in profile.items():
+            setattr(admin, field, value)
+        await session.commit()
+    return admin
 
 
 async def find_active_admin(session: AsyncSession, telegram_id: int) -> AdminUser:

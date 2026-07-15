@@ -179,6 +179,8 @@ async def moderate_forum_topic(message: Message) -> None:
                     payload_json={
                         "telegram_id": message.from_user.id,
                         "username": message.from_user.username,
+                        "first_name": message.from_user.first_name,
+                        "last_name": message.from_user.last_name,
                         "chat_id": message.chat.id,
                         "topic_id": topic.id,
                         "topic_title": topic.title,

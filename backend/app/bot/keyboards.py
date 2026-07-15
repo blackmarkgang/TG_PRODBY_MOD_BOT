@@ -9,8 +9,9 @@ def start_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def portfolio_keyboard() -> ReplyKeyboardMarkup:
+def portfolio_keyboard(has_attachments: bool = False) -> ReplyKeyboardMarkup:
+    button_text = "✅ Готово" if has_attachments else "⏭ Пропустить вложения"
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="✅ Готово")]],
+        keyboard=[[KeyboardButton(text=button_text)]],
         resize_keyboard=True,
     )

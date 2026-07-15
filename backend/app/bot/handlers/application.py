@@ -2,6 +2,7 @@ import re
 from html import escape
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 from sqlalchemy import select
@@ -10,7 +11,19 @@ from app.bot.keyboards import portfolio_keyboard
 from app.bot.states import ApplicationForm
 from app.db.models import ApplicationQuestion
 from app.db.session import SessionLocal
-from app.services.application_service import UserBannedError, create_pending_application, is_user_banned
+from app.services.application_service import (
+    ActiveApplicationError,
+    MAX_APPLICATION_FILE_SIZE,
+    AttachmentTooLargeError,
+    UserBannedError,
+    create_pending_application,
+    is_user_banned,
+)
+from app.services.community_access import (
+    active_application_message,
+    get_active_application,
+    is_group_member,
+)
 
 router = Router()
 
@@ -76,6 +89,25 @@ async def begin_application(message: Message, state: FSMContext, telegram_id: in
                         "Доступ ограничен",
                         "Вы не можете подать новую заявку в Prod.by.",
                     ),
+                    reply_markup=ReplyKeyboardRemove(),
+                )
+                return
+            if await is_group_member(message.bot, telegram_id):
+                await answer_form(
+                    message,
+                    form_message(
+                        "✅",
+                        "Вы уже состоите в Prod.by",
+                        "Повторная заявка не требуется — доступ к сообществу у вас уже есть.",
+                    ),
+                    reply_markup=ReplyKeyboardRemove(),
+                )
+                return
+            active_application = await get_active_application(session, telegram_id)
+            if active_application is not None:
+                await answer_form(
+                    message,
+                    active_application_message(active_application),
                     reply_markup=ReplyKeyboardRemove(),
                 )
                 return
@@ -157,15 +189,19 @@ async def show_portfolio_step(message: Message, state: FSMContext) -> None:
         form_message(
             "📎",
             "Добавьте примеры работ",
-            "Прикрепите до 10 файлов или ссылок. Этот шаг необязательный: когда закончите, нажмите <b>«Готово»</b>.",
+            "Прикрепите до 10 файлов или ссылок. Размер одного файла — не более <b>10 МБ</b>. "
+            "Можно продолжить без вложений — нажмите <b>«Пропустить вложения»</b>.",
             step=len(questions) + 1,
             total_steps=len(questions) + 1,
         ),
-        reply_markup=portfolio_keyboard(),
+        reply_markup=portfolio_keyboard(has_attachments=False),
     )
 
 
-@router.message(ApplicationForm.portfolio, F.text.in_({"Готово", "✅ Готово"}))
+@router.message(
+    ApplicationForm.portfolio,
+    F.text.in_({"Готово", "✅ Готово", "Пропустить вложения", "⏭ Пропустить вложения"}),
+)
 async def finish_portfolio(message: Message, state: FSMContext) -> None:
     await submit_application(message, state)
 
@@ -178,7 +214,7 @@ async def receive_portfolio_item(message: Message, state: FSMContext) -> None:
         await answer_form(
             message,
             form_message("📦", "Лимит достигнут", "Добавлено 10 вложений. Нажмите <b>«Готово»</b>."),
-            reply_markup=portfolio_keyboard(),
+            reply_markup=portfolio_keyboard(has_attachments=True),
         )
         return
 
@@ -191,7 +227,44 @@ async def receive_portfolio_item(message: Message, state: FSMContext) -> None:
                 "Не удалось распознать вложение",
                 "Отправьте файл, аудио, видео, фото или ссылку. Для завершения нажмите <b>«Готово»</b>.",
             ),
-            reply_markup=portfolio_keyboard(),
+            reply_markup=portfolio_keyboard(has_attachments=bool(files)),
+        )
+        return
+
+    for item in items:
+        if item.get("telegram_file_id") and item.get("file_size") is None:
+            try:
+                telegram_file = await message.bot.get_file(item["telegram_file_id"])
+                item["file_size"] = telegram_file.file_size
+            except TelegramAPIError:
+                await answer_form(
+                    message,
+                    form_message(
+                        "⚠️",
+                        "Не удалось проверить размер файла",
+                        "Попробуйте отправить файл еще раз или продолжите без него.",
+                    ),
+                    reply_markup=portfolio_keyboard(has_attachments=bool(files)),
+                )
+                return
+    oversized_item = next(
+        (
+            item
+            for item in items
+            if item.get("file_size") is not None
+            and item["file_size"] > MAX_APPLICATION_FILE_SIZE
+        ),
+        None,
+    )
+    if oversized_item is not None:
+        await answer_form(
+            message,
+            form_message(
+                "⚠️",
+                "Файл слишком большой",
+                "Размер одного файла не должен превышать <b>10 МБ</b>. Отправьте файл меньшего размера или продолжите без него.",
+            ),
+            reply_markup=portfolio_keyboard(has_attachments=bool(files)),
         )
         return
 
@@ -205,7 +278,7 @@ async def receive_portfolio_item(message: Message, state: FSMContext) -> None:
             "Вложение добавлено",
             f"Сейчас в заявке: <b>{len(files)} из {MAX_ATTACHMENTS}</b>. Можно отправить еще или нажать <b>«Готово»</b>.",
         ),
-        reply_markup=portfolio_keyboard(),
+        reply_markup=portfolio_keyboard(has_attachments=True),
     )
 
 
@@ -315,6 +388,21 @@ async def submit_application(message: Message, state: FSMContext) -> None:
                     "Доступ ограничен",
                     "Вы не можете отправить заявку в Prod.by.",
                 ),
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return
+        except AttachmentTooLargeError:
+            await answer_form(
+                message,
+                form_message("⚠️", "Файл слишком большой", "Удалите файл больше 10 МБ и попробуйте снова."),
+                reply_markup=portfolio_keyboard(has_attachments=bool(data.get("files"))),
+            )
+            return
+        except ActiveApplicationError as exc:
+            await state.clear()
+            await answer_form(
+                message,
+                active_application_message(exc.application),
                 reply_markup=ReplyKeyboardRemove(),
             )
             return

@@ -3,10 +3,24 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Application, ApplicationFile, AuditLog, User
+from app.services.community_access import get_active_application
 
 
 class UserBannedError(ValueError):
     pass
+
+
+MAX_APPLICATION_FILE_SIZE = 10 * 1024 * 1024
+
+
+class AttachmentTooLargeError(ValueError):
+    pass
+
+
+class ActiveApplicationError(ValueError):
+    def __init__(self, application: Application):
+        self.application = application
+        super().__init__(f"У пользователя уже есть активная заявка №{application.id}")
 
 
 async def is_user_banned(session: AsyncSession, telegram_id: int) -> bool:
@@ -43,9 +57,20 @@ async def create_pending_application(
     answer_labels: dict,
     files: list[dict],
 ) -> Application:
+    if any(
+        file_data.get("file_size") is not None
+        and file_data["file_size"] > MAX_APPLICATION_FILE_SIZE
+        for file_data in files
+    ):
+        raise AttachmentTooLargeError("Размер одного файла не должен превышать 10 МБ")
+
     user = await get_or_create_user(session, tg_user)
     if user.is_banned:
         raise UserBannedError("Доступ к подаче заявок заблокирован")
+    await session.execute(select(User.id).where(User.id == user.id).with_for_update())
+    active_application = await get_active_application(session, user.telegram_id)
+    if active_application is not None:
+        raise ActiveApplicationError(active_application)
     application = Application(
         user_id=user.id,
         status="pending",
@@ -67,6 +92,8 @@ async def create_pending_application(
                 "user_id": user.id,
                 "telegram_id": user.telegram_id,
                 "username": user.username,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
             },
         )
     )
