@@ -32,6 +32,8 @@ type Application = {
   answers: Record<string, string>;
   files: ApplicationFile[];
   created_at: string;
+  admin_comment: string | null;
+  reviewed_at: string | null;
   user: {
     telegram_id: number;
     username: string | null;
@@ -81,6 +83,8 @@ function formatFileSize(size: number | null): string {
 function App() {
   const [applications, setApplications] = useState<Application[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [comments, setComments] = useState<Record<number, string>>({});
   const initData = useMemo(() => window.Telegram?.WebApp?.initData ?? "", []);
 
   useEffect(() => {
@@ -101,19 +105,48 @@ function App() {
   }
 
   async function review(id: number, action: "approve" | "reject") {
+    setError(null);
+    setFeedback(null);
     const response = await fetch(`${apiBaseUrl}/applications/${id}/${action}`, {
       method: "POST",
       headers: {
         ...authHeaders(initData),
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ comment: null }),
+      body: JSON.stringify({ comment: comments[id]?.trim() || null }),
     });
     if (!response.ok) {
       setError(`Не удалось изменить статус заявки: ${response.status}`);
       return;
     }
+    const result = await response.json();
+    setFeedback(
+      result.warning ??
+        (result.invite_created
+          ? "Решение сохранено. Пользователю отправлена персональная ссылка на вход."
+          : "Решение сохранено. Пользователь уведомлен."),
+    );
     await loadApplications();
+  }
+
+  async function resendNotification(id: number) {
+    setError(null);
+    setFeedback(null);
+    const response = await fetch(`${apiBaseUrl}/applications/${id}/notify`, {
+      method: "POST",
+      headers: authHeaders(initData),
+    });
+    if (!response.ok) {
+      setError(`Не удалось отправить уведомление: ${response.status}`);
+      return;
+    }
+    const result = await response.json();
+    setFeedback(
+      result.warning ??
+        (result.invite_created
+          ? "Уведомление и новая персональная ссылка отправлены."
+          : "Уведомление отправлено повторно."),
+    );
   }
 
   async function downloadFile(applicationId: number, file: ApplicationFile) {
@@ -151,6 +184,7 @@ function App() {
       </header>
 
       {error && <div className="error">{error}</div>}
+      {feedback && <div className="success-message">{feedback}</div>}
       {!initData && (
         <div className="notice">
           Локальный режим разработки. В Mini App будет использоваться авторизация Telegram.
@@ -204,13 +238,32 @@ function App() {
               </div>
             )}
             {item.status === "pending" && (
-              <div className="actions">
-                <button className="approve" onClick={() => review(item.id, "approve")}>
-                  Одобрить
-                </button>
-                <button className="reject" onClick={() => review(item.id, "reject")}>
-                  Отклонить
-                </button>
+              <div className="review-block">
+                <label htmlFor={`comment-${item.id}`}>Комментарий пользователю (необязательно)</label>
+                <textarea
+                  id={`comment-${item.id}`}
+                  value={comments[item.id] ?? ""}
+                  onChange={(event) =>
+                    setComments((current) => ({ ...current, [item.id]: event.target.value }))
+                  }
+                  rows={3}
+                />
+                <div className="actions">
+                  <button className="approve" onClick={() => review(item.id, "approve")}>
+                    Одобрить
+                  </button>
+                  <button className="reject" onClick={() => review(item.id, "reject")}>
+                    Отклонить
+                  </button>
+                </div>
+              </div>
+            )}
+            {item.status !== "pending" && (
+              <div className="review-result">
+                {item.admin_comment && (
+                  <p><strong>Комментарий администрации:</strong> {item.admin_comment}</p>
+                )}
+                <button onClick={() => resendNotification(item.id)}>Отправить уведомление повторно</button>
               </div>
             )}
           </article>

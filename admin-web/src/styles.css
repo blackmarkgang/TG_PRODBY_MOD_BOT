@@ -22,6 +22,16 @@ button {
   padding: 10px 14px;
 }
 
+textarea {
+  border: 1px solid #cfd8dc;
+  border-radius: 8px;
+  color: #182026;
+  font: inherit;
+  padding: 10px;
+  resize: vertical;
+  width: 100%;
+}
+
 .shell {
   width: min(1120px, 100%);
   margin: 0 auto;
@@ -120,6 +130,24 @@ dd {
   margin-top: 14px;
 }
 
+.review-block,
+.review-result {
+  border-top: 1px solid #e5eaed;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.review-block label {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 7px;
+}
+
+.review-result p {
+  color: #182026;
+  margin: 0 0 12px;
+}
+
 .attachments {
   border-top: 1px solid #e5eaed;
   padding-top: 14px;
@@ -182,6 +210,7 @@ dd {
 }
 
 .error,
+.success-message,
 .notice {
   border-radius: 8px;
   margin-bottom: 14px;
@@ -190,6 +219,10 @@ dd {
 
 .error {
   background: #f8d7da;
+}
+
+.success-message {
+  background: #d1e7dd;
 }
 
 .notice {

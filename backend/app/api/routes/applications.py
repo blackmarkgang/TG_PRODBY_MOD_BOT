@@ -14,6 +14,7 @@ from app.api.deps import get_current_admin
 from app.core.config import settings
 from app.db.models import AdminUser, Application, ApplicationFile, AuditLog
 from app.db.session import get_session
+from app.services.notification_service import notify_application_decision
 
 router = APIRouter()
 
@@ -46,6 +47,8 @@ async def list_applications(
             "music_role": item.music_role,
             "answers": item.answers_json,
             "created_at": item.created_at,
+            "admin_comment": item.admin_comment,
+            "reviewed_at": item.reviewed_at,
             "files": [
                 {
                     "id": file.id,
@@ -133,10 +136,12 @@ async def approve_application(
     payload: ReviewPayload,
     admin: AdminUser = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
-) -> dict[str, str]:
-    application = await session.get(Application, application_id)
+) -> dict[str, bool | str | None]:
+    application = await get_application_with_user(session, application_id)
     if application is None:
-        raise HTTPException(status_code=404, detail="Application not found")
+        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    if application.status != "pending":
+        raise HTTPException(status_code=409, detail="Заявка уже обработана")
 
     application.status = "approved"
     application.admin_comment = payload.comment
@@ -144,7 +149,8 @@ async def approve_application(
     application.reviewed_at = datetime.now(timezone.utc)
     session.add(AuditLog(admin_id=admin.id, action="approve", entity_type="application", entity_id=application.id))
     await session.commit()
-    return {"status": "approved"}
+    delivery = await notify_application_decision(application)
+    return {"status": "approved", **delivery}
 
 
 @router.post("/{application_id}/reject")
@@ -153,10 +159,12 @@ async def reject_application(
     payload: ReviewPayload,
     admin: AdminUser = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
-) -> dict[str, str]:
-    application = await session.get(Application, application_id)
+) -> dict[str, bool | str | None]:
+    application = await get_application_with_user(session, application_id)
     if application is None:
-        raise HTTPException(status_code=404, detail="Application not found")
+        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    if application.status != "pending":
+        raise HTTPException(status_code=409, detail="Заявка уже обработана")
 
     application.status = "rejected"
     application.admin_comment = payload.comment
@@ -164,4 +172,43 @@ async def reject_application(
     application.reviewed_at = datetime.now(timezone.utc)
     session.add(AuditLog(admin_id=admin.id, action="reject", entity_type="application", entity_id=application.id))
     await session.commit()
-    return {"status": "rejected"}
+    delivery = await notify_application_decision(application)
+    return {"status": "rejected", **delivery}
+
+
+@router.post("/{application_id}/notify")
+async def resend_application_notification(
+    application_id: int,
+    admin: AdminUser = Depends(get_current_admin),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, bool | str | None]:
+    application = await get_application_with_user(session, application_id)
+    if application is None:
+        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    if application.status not in {"approved", "rejected"}:
+        raise HTTPException(status_code=409, detail="По заявке еще нет решения")
+
+    delivery = await notify_application_decision(application)
+    session.add(
+        AuditLog(
+            admin_id=admin.id,
+            action="resend_notification",
+            entity_type="application",
+            entity_id=application.id,
+            payload_json=delivery,
+        )
+    )
+    await session.commit()
+    return {"status": application.status, **delivery}
+
+
+async def get_application_with_user(
+    session: AsyncSession,
+    application_id: int,
+) -> Application | None:
+    result = await session.execute(
+        select(Application)
+        .options(selectinload(Application.user))
+        .where(Application.id == application_id)
+    )
+    return result.scalar_one_or_none()
