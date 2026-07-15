@@ -43,8 +43,10 @@ async def moderate_forum_topic(message: Message) -> None:
     try:
         await message.bot.send_message(
             message.from_user.id,
-            "Публикация в этой теме доступна только одобренным авторам. "
+            "🔒 <b>Публикация ограничена</b>\n\n"
+            "В этой теме могут писать только одобренные авторы. "
             "Чтобы получить доступ, обратитесь к администрации.",
+            parse_mode="HTML",
         )
     except Exception:
         pass

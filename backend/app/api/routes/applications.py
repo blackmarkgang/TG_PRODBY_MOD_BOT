@@ -15,12 +15,14 @@ from app.core.config import settings
 from app.db.models import AdminUser, Application, ApplicationFile, AuditLog
 from app.db.session import get_session
 from app.services.notification_service import notify_application_decision
+from app.services.role_service import get_user_roles_map, set_user_role
 
 router = APIRouter()
 
 
 class ReviewPayload(BaseModel):
     comment: str | None = None
+    role_code: str | None = None
 
 
 @router.get("")
@@ -39,6 +41,7 @@ async def list_applications(
 
     result = await session.execute(query)
     applications = result.scalars().all()
+    roles_map = await get_user_roles_map(session, [item.user_id for item in applications])
     return [
         {
             "id": item.id,
@@ -49,6 +52,7 @@ async def list_applications(
             "created_at": item.created_at,
             "admin_comment": item.admin_comment,
             "reviewed_at": item.reviewed_at,
+            "roles": roles_map.get(item.user_id, []),
             "files": [
                 {
                     "id": file.id,
@@ -142,14 +146,29 @@ async def approve_application(
         raise HTTPException(status_code=404, detail="Заявка не найдена")
     if application.status != "pending":
         raise HTTPException(status_code=409, detail="Заявка уже обработана")
+    if not payload.role_code:
+        raise HTTPException(status_code=422, detail="Перед одобрением назначьте роль")
+
+    try:
+        role = await set_user_role(session, application.user_id, payload.role_code)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     application.status = "approved"
     application.admin_comment = payload.comment
     application.reviewed_by_admin_id = admin.id
     application.reviewed_at = datetime.now(timezone.utc)
-    session.add(AuditLog(admin_id=admin.id, action="approve", entity_type="application", entity_id=application.id))
+    session.add(
+        AuditLog(
+            admin_id=admin.id,
+            action="approve",
+            entity_type="application",
+            entity_id=application.id,
+            payload_json={"role_code": role.code},
+        )
+    )
     await session.commit()
-    delivery = await notify_application_decision(application)
+    delivery = await notify_application_decision(application, role_title=role.title)
     return {"status": "approved", **delivery}
 
 
@@ -188,7 +207,10 @@ async def resend_application_notification(
     if application.status not in {"approved", "rejected"}:
         raise HTTPException(status_code=409, detail="По заявке еще нет решения")
 
-    delivery = await notify_application_decision(application)
+    roles_map = await get_user_roles_map(session, [application.user_id])
+    assigned_roles = roles_map.get(application.user_id, [])
+    role_title = assigned_roles[0]["title"] if assigned_roles else None
+    delivery = await notify_application_decision(application, role_title=role_title)
     session.add(
         AuditLog(
             admin_id=admin.id,

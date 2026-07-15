@@ -4,16 +4,28 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
-from app.bot.keyboards import ROLE_LABELS, portfolio_keyboard, roles_keyboard
+from app.bot.keyboards import portfolio_keyboard
 from app.bot.states import ApplicationForm
 from app.db.session import SessionLocal
 from app.services.application_service import create_pending_application
 
 router = Router()
 
-CREATOR_ROLES = {"Артист", "Битмейкер / Продюсер"}
 URL_PATTERN = re.compile(r"https?://[^\s]+", re.IGNORECASE)
 MAX_ATTACHMENTS = 10
+TOTAL_STEPS = 5
+
+
+def form_message(emoji: str, title: str, body: str, step: int | None = None) -> str:
+    parts = [f"{emoji} <b>{title}</b>"]
+    if step is not None:
+        parts.append(f"<i>Шаг {step} из {TOTAL_STEPS}</i>")
+    parts.append(body)
+    return "\n\n".join(parts)
+
+
+async def answer_form(message: Message, text: str, **kwargs) -> None:
+    await message.answer(text, parse_mode="HTML", **kwargs)
 
 
 @router.message(F.text == "Подать заявку")
@@ -32,134 +44,102 @@ async def begin_application(message: Message, state: FSMContext) -> None:
     await state.clear()
     await state.update_data(files=[])
     await state.set_state(ApplicationForm.age)
-    await message.answer("Сколько вам лет?", reply_markup=ReplyKeyboardRemove())
+    await answer_form(
+        message,
+        form_message(
+            "🎂",
+            "Сколько вам лет?",
+            "Отправьте возраст одним числом.",
+            step=1,
+        ),
+        reply_markup=ReplyKeyboardRemove(),
+    )
 
 
 @router.message(ApplicationForm.age)
 async def receive_age(message: Message, state: FSMContext) -> None:
     if not message.text or not message.text.isdigit():
-        await message.answer("Отправьте возраст числом.")
+        await answer_form(message, form_message("⚠️", "Нужен возраст числом", "Например: <b>24</b>."))
         return
 
     age = int(message.text)
     if not 1 <= age <= 120:
-        await message.answer("Укажите корректный возраст от 1 до 120 лет.")
+        await answer_form(message, form_message("⚠️", "Проверьте возраст", "Допустимое значение: от 1 до 120."))
         return
 
     await state.update_data(age=age)
-    await state.set_state(ApplicationForm.music_role)
-    await message.answer("Чем вы занимаетесь в музыке?", reply_markup=roles_keyboard())
-
-
-@router.message(ApplicationForm.music_role)
-async def receive_music_role(message: Message, state: FSMContext) -> None:
-    role = message.text or ""
-    if role not in ROLE_LABELS:
-        await message.answer("Выберите один из вариантов на клавиатуре.", reply_markup=roles_keyboard())
-        return
-
-    await state.update_data(music_role=role, portfolio_required=role in CREATOR_ROLES)
-
-    if role in CREATOR_ROLES:
-        await state.set_state(ApplicationForm.portfolio)
-        prompt = (
-            "Прикрепите несколько своих лучших треков, битов или ссылок на них. "
-            "Можно отправить до 10 файлов/ссылок. Когда закончите, нажмите «Готово»."
-        )
-        await message.answer(prompt, reply_markup=portfolio_keyboard())
-        return
-
     await state.set_state(ApplicationForm.role_details)
-    if role == "Слушатель":
-        await message.answer("Кого вы слушаете?", reply_markup=ReplyKeyboardRemove())
-    else:
-        await message.answer(
-            "Коротко расскажите о себе и чем можете быть полезны сообществу.",
-            reply_markup=ReplyKeyboardRemove(),
-        )
+    await answer_form(
+        message,
+        form_message(
+            "🎙",
+            "Расскажите о себе",
+            "Чем вы занимаетесь в музыке или смежных творческих направлениях? Чем можете быть полезны сообществу?",
+            step=2,
+        ),
+    )
 
 
 @router.message(ApplicationForm.role_details)
 async def receive_role_details(message: Message, state: FSMContext) -> None:
     if not message.text:
-        await message.answer("Ответьте текстом.")
-        return
-
-    data = await state.get_data()
-    if data["music_role"] == "Слушатель":
-        await state.update_data(listener_artists=message.text)
-        await state.set_state(ApplicationForm.listener_follows)
-        await message.answer("За кем вы следите в музыкальной индустрии?")
+        await answer_form(message, form_message("⚠️", "Нужен текстовый ответ", "Расскажите о себе в нескольких предложениях."))
         return
 
     await state.update_data(role_details=message.text)
-    await ask_motivation(message, state)
-
-
-@router.message(ApplicationForm.listener_follows)
-async def receive_listener_follows(message: Message, state: FSMContext) -> None:
-    if not message.text:
-        await message.answer("Ответьте текстом.")
-        return
-    await state.update_data(listener_follows=message.text)
-    await state.set_state(ApplicationForm.listener_likes)
-    await message.answer("Что вам нравится в музыке?")
-
-
-@router.message(ApplicationForm.listener_likes)
-async def receive_listener_likes(message: Message, state: FSMContext) -> None:
-    if not message.text:
-        await message.answer("Ответьте текстом.")
-        return
-    await state.update_data(listener_likes=message.text)
-    await ask_motivation(message, state)
-
-
-async def ask_motivation(message: Message, state: FSMContext) -> None:
     await state.set_state(ApplicationForm.motivation)
-    await message.answer("Почему вы хотите попасть в сообщество Prod.by?")
+    await answer_form(
+        message,
+        form_message(
+            "💬",
+            "Почему вы хотите попасть в Prod.by?",
+            "Напишите коротко и своими словами.",
+            step=3,
+        ),
+    )
 
 
 @router.message(ApplicationForm.motivation)
 async def receive_motivation(message: Message, state: FSMContext) -> None:
     if not message.text:
-        await message.answer("Ответьте текстом.")
+        await answer_form(message, form_message("⚠️", "Нужен текстовый ответ", "Опишите вашу мотивацию в нескольких предложениях."))
         return
+
     await state.update_data(motivation=message.text)
     await state.set_state(ApplicationForm.expectations)
-    await message.answer("Что вы ожидаете получить от участия?")
+    await answer_form(
+        message,
+        form_message(
+            "🎯",
+            "Что вы ожидаете от участия?",
+            "Расскажите, что хотите получить от сообщества и чем готовы делиться.",
+            step=4,
+        ),
+    )
 
 
 @router.message(ApplicationForm.expectations)
 async def receive_expectations(message: Message, state: FSMContext) -> None:
     if not message.text:
-        await message.answer("Ответьте текстом.")
-        return
-    await state.update_data(expectations=message.text)
-    data = await state.get_data()
-    if data["music_role"] in CREATOR_ROLES:
-        await submit_application(message, state)
+        await answer_form(message, form_message("⚠️", "Нужен текстовый ответ", "Опишите ваши ожидания от участия."))
         return
 
+    await state.update_data(expectations=message.text)
     await state.set_state(ApplicationForm.portfolio)
-    await message.answer(
-        "При желании прикрепите файлы или ссылки на свои работы. "
-        "Можно отправить до 10 файлов/ссылок. Для продолжения нажмите «Готово».",
+    await answer_form(
+        message,
+        form_message(
+            "📎",
+            "Добавьте примеры работ",
+            "Прикрепите до 10 файлов или ссылок. Этот шаг необязательный: когда закончите, нажмите <b>«Готово»</b>.",
+            step=5,
+        ),
         reply_markup=portfolio_keyboard(),
     )
 
 
-@router.message(ApplicationForm.portfolio, F.text == "Готово")
+@router.message(ApplicationForm.portfolio, F.text.in_({"Готово", "✅ Готово"}))
 async def finish_portfolio(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    if data.get("portfolio_required") and not data.get("files"):
-        await message.answer("Для выбранной роли прикрепите хотя бы один файл или ссылку.")
-        return
-
-    if "motivation" not in data:
-        await ask_motivation(message, state)
-        return
-
     await submit_application(message, state)
 
 
@@ -168,18 +148,38 @@ async def receive_portfolio_item(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     files = list(data.get("files", []))
     if len(files) >= MAX_ATTACHMENTS:
-        await message.answer("Достигнут лимит: 10 файлов или ссылок. Нажмите «Готово».")
+        await answer_form(
+            message,
+            form_message("📦", "Лимит достигнут", "Добавлено 10 вложений. Нажмите <b>«Готово»</b>."),
+            reply_markup=portfolio_keyboard(),
+        )
         return
 
     items = extract_file_items(message)
     if not items:
-        await message.answer("Отправьте файл, аудио, видео или ссылку, либо нажмите «Готово».")
+        await answer_form(
+            message,
+            form_message(
+                "⚠️",
+                "Не удалось распознать вложение",
+                "Отправьте файл, аудио, видео, фото или ссылку. Для завершения нажмите <b>«Готово»</b>.",
+            ),
+            reply_markup=portfolio_keyboard(),
+        )
         return
 
     available = MAX_ATTACHMENTS - len(files)
     files.extend(items[:available])
     await state.update_data(files=files)
-    await message.answer(f"Добавлено: {len(files)} из {MAX_ATTACHMENTS}.", reply_markup=portfolio_keyboard())
+    await answer_form(
+        message,
+        form_message(
+            "✅",
+            "Вложение добавлено",
+            f"Сейчас в заявке: <b>{len(files)} из {MAX_ATTACHMENTS}</b>. Можно отправить еще или нажать <b>«Готово»</b>.",
+        ),
+        reply_markup=portfolio_keyboard(),
+    )
 
 
 def extract_file_items(message: Message) -> list[dict]:
@@ -250,19 +250,15 @@ async def submit_application(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     answers = {
         key: data[key]
-        for key in (
-            "role_details",
-            "listener_artists",
-            "listener_follows",
-            "listener_likes",
-            "motivation",
-            "expectations",
-        )
+        for key in ("role_details", "motivation", "expectations")
         if data.get(key)
     }
 
     if message.from_user is None:
-        await message.answer("Не удалось определить пользователя. Попробуйте начать заново командой /start.")
+        await answer_form(
+            message,
+            form_message("⚠️", "Не удалось определить пользователя", "Отправьте /start и попробуйте еще раз."),
+        )
         return
 
     async with SessionLocal() as session:
@@ -270,13 +266,18 @@ async def submit_application(message: Message, state: FSMContext) -> None:
             session=session,
             tg_user=message.from_user,
             age=data["age"],
-            music_role=data["music_role"],
+            music_role=None,
             answers=answers,
             files=data.get("files", []),
         )
 
     await state.clear()
-    await message.answer(
-        f"Заявка №{application.id} отправлена. Мы сообщим вам о решении после рассмотрения.",
+    await answer_form(
+        message,
+        form_message(
+            "🎉",
+            f"Заявка №{application.id} отправлена",
+            "Администрация рассмотрит ее и пришлет результат в этот чат.",
+        ),
         reply_markup=ReplyKeyboardRemove(),
     )

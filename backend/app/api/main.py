@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import applications, health, whitelist
+from app.api.routes import applications, health, participants, whitelist
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.services.bootstrap import seed_defaults
@@ -28,5 +28,5 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(applications.router, prefix="/applications", tags=["applications"])
+app.include_router(participants.router, prefix="/participants", tags=["participants"])
 app.include_router(whitelist.router, prefix="/whitelist", tags=["whitelist"])
-

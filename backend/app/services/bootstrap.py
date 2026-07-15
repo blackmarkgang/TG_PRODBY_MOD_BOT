@@ -6,13 +6,16 @@ from app.db.models import AdminUser, CommunityRole
 
 
 DEFAULT_COMMUNITY_ROLES = [
-    ("artist", "Artist"),
-    ("producer", "Producer"),
-    ("beatmaker", "Beatmaker"),
-    ("listener", "Listener"),
-    ("sound_engineer", "Sound engineer"),
-    ("designer", "Designer"),
-    ("editor", "Editor"),
+    ("artist", "Артист"),
+    ("producer", "Продюсер"),
+    ("beatmaker", "Битмейкер"),
+    ("listener", "Слушатель"),
+    ("sound_engineer", "Звукоинженер"),
+    ("designer", "Дизайнер"),
+    ("editor", "Монтажер"),
+    ("operator", "Оператор"),
+    ("organizer", "Организатор"),
+    ("other", "Другое"),
 ]
 
 
@@ -24,8 +27,10 @@ async def seed_defaults(session: AsyncSession) -> None:
 
     for code, title in DEFAULT_COMMUNITY_ROLES:
         result = await session.execute(select(CommunityRole).where(CommunityRole.code == code))
-        if result.scalar_one_or_none() is None:
+        role = result.scalar_one_or_none()
+        if role is None:
             session.add(CommunityRole(code=code, title=title))
+        else:
+            role.title = title
 
     await session.commit()
-

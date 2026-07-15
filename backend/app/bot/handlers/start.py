@@ -33,7 +33,7 @@ async def admin_panel(message: Message) -> None:
     if message.from_user and message.from_user.id in settings.admin_ids:
         builder = InlineKeyboardBuilder()
         builder.button(text="Открыть панель", web_app=WebAppInfo(url=settings.public_webapp_url))
-        await message.answer("Панель администратора", reply_markup=builder.as_markup())
+        await message.answer("⚙️ <b>Панель администратора</b>", parse_mode="HTML", reply_markup=builder.as_markup())
         return
 
-    await message.answer("Доступ запрещен.")
+    await message.answer("⛔ <b>Доступ запрещен</b>", parse_mode="HTML")

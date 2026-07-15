@@ -29,7 +29,7 @@ async def create_pending_application(
     session: AsyncSession,
     tg_user: TelegramUser,
     age: int,
-    music_role: str,
+    music_role: str | None,
     answers: dict,
     files: list[dict],
 ) -> Application:
