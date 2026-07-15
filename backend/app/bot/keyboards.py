@@ -19,7 +19,7 @@ ROLE_LABELS = [
 def start_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Подать заявку", callback_data="start_application")]
+            [InlineKeyboardButton(text="📝 Подать заявку", callback_data="start_application")]
         ]
     )
 
