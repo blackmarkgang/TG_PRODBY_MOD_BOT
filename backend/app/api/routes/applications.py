@@ -1,28 +1,37 @@
 from datetime import datetime, timezone
+from html import escape
 from urllib.parse import quote
 
 import httpx
 from aiogram import Bot
+from aiogram.exceptions import TelegramAPIError
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-from sqlalchemy import desc, select
+from pydantic import BaseModel, Field
+from sqlalchemy import delete, desc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_admin
 from app.core.config import settings
-from app.db.models import AdminUser, Application, ApplicationFile, AuditLog
+from app.db.models import (
+    AdminUser,
+    Application,
+    ApplicationFile,
+    AuditLog,
+    TopicWhitelist,
+    UserRole,
+)
 from app.db.session import get_session
 from app.services.notification_service import notify_application_decision
-from app.services.role_service import get_user_roles_map, set_user_role
+from app.services.role_service import get_user_roles_map, set_user_roles
 
 router = APIRouter()
 
 
 class ReviewPayload(BaseModel):
     comment: str | None = None
-    role_code: str | None = None
+    role_codes: list[str] = Field(default_factory=list)
 
 
 @router.get("")
@@ -70,6 +79,7 @@ async def list_applications(
                 "username": item.user.username,
                 "first_name": item.user.first_name,
                 "last_name": item.user.last_name,
+                "is_banned": item.user.is_banned,
             },
         }
         for item in applications
@@ -146,13 +156,13 @@ async def approve_application(
         raise HTTPException(status_code=404, detail="Заявка не найдена")
     if application.status != "pending":
         raise HTTPException(status_code=409, detail="Заявка уже обработана")
-    if not payload.role_code:
-        raise HTTPException(status_code=422, detail="Перед одобрением назначьте роль")
+    if not payload.role_codes:
+        raise HTTPException(status_code=422, detail="Перед одобрением назначьте хотя бы одну роль")
 
     try:
-        role = await set_user_role(session, application.user_id, payload.role_code)
+        roles = await set_user_roles(session, application.user_id, payload.role_codes)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     application.status = "approved"
     application.admin_comment = payload.comment
@@ -164,11 +174,14 @@ async def approve_application(
             action="approve",
             entity_type="application",
             entity_id=application.id,
-            payload_json={"role_code": role.code},
+            payload_json={"role_codes": [role.code for role in roles]},
         )
     )
     await session.commit()
-    delivery = await notify_application_decision(application, role_title=role.title)
+    delivery = await notify_application_decision(
+        application,
+        role_title=", ".join(role.title for role in roles),
+    )
     return {"status": "approved", **delivery}
 
 
@@ -195,6 +208,93 @@ async def reject_application(
     return {"status": "rejected", **delivery}
 
 
+@router.post("/{application_id}/ban")
+async def ban_application_user(
+    application_id: int,
+    payload: ReviewPayload,
+    admin: AdminUser = Depends(get_current_admin),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, bool | str | None]:
+    application = await get_application_with_user(session, application_id)
+    if application is None:
+        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    if application.user.is_banned:
+        raise HTTPException(status_code=409, detail="Пользователь уже заблокирован")
+
+    target_admin_result = await session.execute(
+        select(AdminUser.id).where(
+            AdminUser.telegram_id == application.user.telegram_id,
+            AdminUser.is_active.is_(True),
+        )
+    )
+    if target_admin_result.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail="Нельзя заблокировать администратора")
+
+    now = datetime.now(timezone.utc)
+    application.user.is_banned = True
+    application.user.banned_at = now
+    application.status = "banned"
+    application.admin_comment = payload.comment
+    application.reviewed_by_admin_id = admin.id
+    application.reviewed_at = now
+    await session.execute(
+        update(Application)
+        .where(
+            Application.user_id == application.user_id,
+            Application.status == "pending",
+        )
+        .values(
+            status="banned",
+            admin_comment=payload.comment,
+            reviewed_by_admin_id=admin.id,
+            reviewed_at=now,
+        )
+    )
+    await session.execute(delete(UserRole).where(UserRole.user_id == application.user_id))
+    await session.execute(delete(TopicWhitelist).where(TopicWhitelist.user_id == application.user_id))
+    session.add(
+        AuditLog(
+            admin_id=admin.id,
+            action="ban_user",
+            entity_type="user",
+            entity_id=application.user_id,
+            payload_json={"application_id": application.id, "comment": payload.comment},
+        )
+    )
+    await session.commit()
+
+    notification_sent = False
+    group_ban_applied = False
+    warning: str | None = None
+    bot = Bot(settings.bot_token)
+    try:
+        text = "⛔ <b>Доступ к Prod.by заблокирован.</b>"
+        if payload.comment:
+            text += f"\n\n💬 <b>Комментарий администрации</b>\n{escape(payload.comment)}"
+        try:
+            await bot.send_message(application.user.telegram_id, text, parse_mode="HTML")
+            notification_sent = True
+        except TelegramAPIError:
+            warning = "Бот не смог отправить пользователю уведомление."
+
+        if settings.telegram_group_id:
+            try:
+                await bot.ban_chat_member(settings.telegram_group_id, application.user.telegram_id)
+                group_ban_applied = True
+            except TelegramAPIError:
+                group_warning = "Бот не смог заблокировать пользователя в группе."
+                warning = f"{warning} {group_warning}" if warning else group_warning
+    finally:
+        await bot.session.close()
+
+    return {
+        "status": "banned",
+        "notification_sent": notification_sent,
+        "group_ban_applied": group_ban_applied,
+        "warning": warning,
+    }
+
+
 @router.post("/{application_id}/notify")
 async def resend_application_notification(
     application_id: int,
@@ -209,7 +309,7 @@ async def resend_application_notification(
 
     roles_map = await get_user_roles_map(session, [application.user_id])
     assigned_roles = roles_map.get(application.user_id, [])
-    role_title = assigned_roles[0]["title"] if assigned_roles else None
+    role_title = ", ".join(role["title"] for role in assigned_roles) or None
     delivery = await notify_application_decision(application, role_title=role_title)
     session.add(
         AuditLog(

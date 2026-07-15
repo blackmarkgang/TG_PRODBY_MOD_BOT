@@ -38,7 +38,7 @@ async def notify_application_decision(
 
             text = "🎉 <b>Ваша заявка одобрена!</b>\n\nДобро пожаловать в сообщество Prod.by."
             if role_title:
-                text += f"\n\n🎭 Ваша роль: <b>{escape(role_title)}</b>"
+                text += f"\n\n🎭 Назначенные роли: <b>{escape(role_title)}</b>"
             if application.admin_comment:
                 text += f"\n\n💬 <b>Комментарий администрации</b>\n{escape(application.admin_comment)}"
             if invite_url:

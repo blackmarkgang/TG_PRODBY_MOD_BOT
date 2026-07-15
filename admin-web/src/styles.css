@@ -264,6 +264,13 @@ a:focus-visible {
   border-color: #ff6b6b;
 }
 
+.status.banned,
+.participant-status.banned {
+  border-color: #ff4545;
+  background: #2a0d0d;
+  color: #ff7070;
+}
+
 .participant-status.none {
   color: #888888;
 }
@@ -423,6 +430,21 @@ textarea {
   color: #ff6b6b;
 }
 
+.ban-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-color: #ff4545;
+  background: #2a0d0d;
+  color: #ff7070;
+}
+
+.ban-button:hover {
+  border-color: #ff7070;
+  background: #381010;
+  color: #ff8b8b;
+}
+
 .review-result p {
   margin: 0 0 12px;
   color: #cccccc;
@@ -432,10 +454,37 @@ textarea {
   border-top: 1px solid #2a2a2a;
 }
 
+.participant-search {
+  width: min(440px, 100%);
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #333333;
+  border-radius: 4px;
+  background: #0a0a0a;
+  color: #777777;
+  padding: 0 12px;
+}
+
+.participant-search:focus-within {
+  border-color: #63ff66;
+  color: #63ff66;
+}
+
+.participant-search input {
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  outline: 0;
+}
+
 .participant-row {
   min-height: 70px;
   display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) minmax(150px, 0.7fr) minmax(190px, 0.8fr);
+  grid-template-columns: minmax(190px, 1.2fr) minmax(130px, 0.6fr) minmax(220px, 1fr) minmax(110px, 0.45fr);
   align-items: center;
   gap: 18px;
   border-bottom: 1px solid #2a2a2a;
@@ -458,6 +507,51 @@ textarea {
 .participant-name strong,
 .participant-name span {
   overflow-wrap: anywhere;
+}
+
+.role-badges {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.role-badges span {
+  border: 1px solid #3a3a3a;
+  border-radius: 999px;
+  color: #cccccc;
+  font-size: 12px;
+  padding: 5px 8px;
+}
+
+.role-badges em {
+  color: #777777;
+  font-size: 13px;
+  font-style: normal;
+}
+
+.manage-roles {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.manage-roles.active {
+  border-color: #63ff66;
+  color: #63ff66;
+}
+
+.manage-roles:disabled {
+  border-color: #292929;
+  color: #555555;
+  cursor: not-allowed;
+}
+
+.participant-role-editor {
+  border-bottom: 1px solid #2a2a2a;
+  background: #0d0d0d;
+  padding: 16px;
 }
 
 .empty {
@@ -576,13 +670,15 @@ textarea {
   margin: 24px 0 10px;
 }
 
-.role-options {
+.role-options,
+.role-choice-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
-.role-options label {
+.role-options label,
+.role-choice-grid label {
   min-height: 44px;
   display: flex;
   align-items: center;
@@ -594,17 +690,26 @@ textarea {
   padding: 9px 10px;
 }
 
-.role-options label.selected {
+.role-options label.selected,
+.role-choice-grid label.selected {
   border-color: #63ff66;
   color: #ffffff;
 }
 
-.role-options input {
+.role-options input,
+.role-choice-grid input {
   position: absolute;
   width: 1px;
   height: 1px;
   opacity: 0;
-  pointer-events: none;
+}
+
+.role-choice-grid {
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+}
+
+.application-role-options {
+  margin-bottom: 4px;
 }
 
 .check-box {
@@ -750,8 +855,13 @@ textarea {
     padding: 20px 2px 24px;
   }
 
-  .role-options {
+  .role-options,
+  .role-choice-grid {
     grid-template-columns: 1fr;
+  }
+
+  .participant-role-editor {
+    padding: 14px 2px 18px;
   }
 
   .manual-topic,

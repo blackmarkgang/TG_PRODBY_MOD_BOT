@@ -4,20 +4,34 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import CommunityRole, User, UserRole
 
 
-async def set_user_role(session: AsyncSession, user_id: int, role_code: str) -> CommunityRole:
+async def set_user_roles(
+    session: AsyncSession,
+    user_id: int,
+    role_codes: list[str],
+) -> list[CommunityRole]:
     user = await session.get(User, user_id)
     if user is None:
         raise ValueError("Пользователь не найден")
+    if user.is_banned and role_codes:
+        raise ValueError("Нельзя назначить роли заблокированному пользователю")
 
-    result = await session.execute(select(CommunityRole).where(CommunityRole.code == role_code))
-    role = result.scalar_one_or_none()
-    if role is None:
-        raise ValueError("Роль не найдена")
+    unique_codes = list(dict.fromkeys(role_codes))
+    result = await session.execute(
+        select(CommunityRole)
+        .where(CommunityRole.code.in_(unique_codes))
+        .order_by(CommunityRole.title)
+    )
+    roles = list(result.scalars().all())
+    if len(roles) != len(unique_codes):
+        found_codes = {role.code for role in roles}
+        unknown_codes = sorted(set(unique_codes) - found_codes)
+        raise ValueError(f"Неизвестные роли: {', '.join(unknown_codes)}")
 
     await session.execute(delete(UserRole).where(UserRole.user_id == user_id))
-    session.add(UserRole(user_id=user_id, role_id=role.id))
+    for role in roles:
+        session.add(UserRole(user_id=user_id, role_id=role.id))
     await session.flush()
-    return role
+    return roles
 
 
 async def get_user_roles_map(

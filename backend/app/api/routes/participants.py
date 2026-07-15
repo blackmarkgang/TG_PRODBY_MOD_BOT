@@ -6,13 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_admin
 from app.db.models import AdminUser, Application, AuditLog, CommunityRole, User
 from app.db.session import get_session
-from app.services.role_service import get_user_roles_map, set_user_role
+from app.services.role_service import get_user_roles_map, set_user_roles
 
 router = APIRouter()
 
 
 class RoleAssignmentPayload(BaseModel):
-    role_code: str
+    role_codes: list[str]
 
 
 @router.get("/roles")
@@ -52,6 +52,7 @@ async def list_participants(
             "first_name": user.first_name,
             "last_name": user.last_name,
             "created_at": user.created_at,
+            "is_banned": user.is_banned,
             "roles": roles_map.get(user.id, []),
             "latest_application_status": (
                 latest_applications[user.id].status if user.id in latest_applications else None
@@ -61,26 +62,26 @@ async def list_participants(
     ]
 
 
-@router.put("/{user_id}/role")
-async def update_participant_role(
+@router.put("/{user_id}/roles")
+async def update_participant_roles(
     user_id: int,
     payload: RoleAssignmentPayload,
     admin: AdminUser = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
-) -> dict[str, str]:
+) -> dict[str, list[dict[str, str]]]:
     try:
-        role = await set_user_role(session, user_id, payload.role_code)
+        roles = await set_user_roles(session, user_id, payload.role_codes)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     session.add(
         AuditLog(
             admin_id=admin.id,
-            action="assign_role",
+            action="assign_roles",
             entity_type="user",
             entity_id=user_id,
-            payload_json={"role_code": role.code},
+            payload_json={"role_codes": [role.code for role in roles]},
         )
     )
     await session.commit()
-    return {"role_code": role.code, "role_title": role.title}
+    return {"roles": [{"code": role.code, "title": role.title} for role in roles]}

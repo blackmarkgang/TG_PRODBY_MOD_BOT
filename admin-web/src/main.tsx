@@ -11,7 +11,10 @@ import {
   Play,
   RefreshCw,
   Save,
+  Search,
   Settings,
+  ShieldBan,
+  SlidersHorizontal,
   Users,
 } from "lucide-react";
 import "./styles.css";
@@ -55,6 +58,7 @@ type Application = {
     username: string | null;
     first_name: string | null;
     last_name: string | null;
+    is_banned: boolean;
   };
 };
 
@@ -65,6 +69,7 @@ type Participant = {
   first_name: string | null;
   last_name: string | null;
   created_at: string;
+  is_banned: boolean;
   roles: Role[];
   latest_application_status: string | null;
 };
@@ -88,12 +93,14 @@ const statusLabels: Record<string, string> = {
   pending: "На рассмотрении",
   approved: "Одобрена",
   rejected: "Отклонена",
+  banned: "Заблокирована",
 };
 
 const participantStatusLabels: Record<string, string> = {
   pending: "Ожидает решения",
   approved: "Принят",
   rejected: "Отклонен",
+  banned: "Заблокирован",
 };
 
 const answerLabels: Record<string, string> = {
@@ -164,14 +171,28 @@ function App() {
   const [topicTitleDrafts, setTopicTitleDrafts] = useState<Record<number, string>>({});
   const [newTopicId, setNewTopicId] = useState("");
   const [newTopicTitle, setNewTopicTitle] = useState("");
+  const [participantSearch, setParticipantSearch] = useState("");
+  const [editingParticipantId, setEditingParticipantId] = useState<number | null>(null);
+  const [participantRoleDrafts, setParticipantRoleDrafts] = useState<Record<number, string[]>>({});
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [comments, setComments] = useState<Record<number, string>>({});
-  const [applicationRoles, setApplicationRoles] = useState<Record<number, string>>({});
+  const [applicationRoles, setApplicationRoles] = useState<Record<number, string[]>>({});
   const [previewUrls, setPreviewUrls] = useState<Record<number, string>>({});
   const [loadingPreviews, setLoadingPreviews] = useState<Set<number>>(new Set());
   const previewUrlsRef = useRef<Record<number, string>>({});
   const initData = useMemo(() => window.Telegram?.WebApp?.initData ?? "", []);
+  const filteredParticipants = useMemo(() => {
+    const query = participantSearch.trim().toLocaleLowerCase("ru-RU").replace(/^@/, "");
+    if (!query) return participants;
+    return participants.filter((participant) => (
+      [participant.first_name, participant.last_name, participant.username, String(participant.telegram_id)]
+        .filter(Boolean)
+        .join(" ")
+        .toLocaleLowerCase("ru-RU")
+        .includes(query)
+    ));
+  }, [participantSearch, participants]);
 
   useEffect(() => {
     window.Telegram?.WebApp?.ready();
@@ -200,9 +221,17 @@ function App() {
       return;
     }
 
-    setApplications(await applicationsResponse.json());
-    setParticipants(await participantsResponse.json());
+    const loadedApplications: Application[] = await applicationsResponse.json();
+    const loadedParticipants: Participant[] = await participantsResponse.json();
+    setApplications(loadedApplications);
+    setParticipants(loadedParticipants);
     setRoles(await rolesResponse.json());
+    setApplicationRoles(Object.fromEntries(
+      loadedApplications.map((application) => [application.id, application.roles.map((role) => role.code)]),
+    ));
+    setParticipantRoleDrafts(Object.fromEntries(
+      loadedParticipants.map((participant) => [participant.id, participant.roles.map((role) => role.code)]),
+    ));
     const loadedTopics: Topic[] = await topicsResponse.json();
     setTopics(loadedTopics);
     setTopicRoleDrafts(Object.fromEntries(loadedTopics.map((topic) => [topic.id, topic.allowed_roles.map((role) => role.code)])));
@@ -213,9 +242,9 @@ function App() {
   async function review(id: number, action: "approve" | "reject") {
     setError(null);
     setFeedback(null);
-    const selectedRole = applicationRoles[id];
-    if (action === "approve" && !selectedRole) {
-      setError("Перед одобрением выберите роль участника.");
+    const selectedRoles = applicationRoles[id] ?? [];
+    if (action === "approve" && selectedRoles.length === 0) {
+      setError("Перед одобрением выберите хотя бы одну роль участника.");
       return;
     }
 
@@ -224,7 +253,7 @@ function App() {
       headers: { ...authHeaders(initData), "Content-Type": "application/json" },
       body: JSON.stringify({
         comment: comments[id]?.trim() || null,
-        role_code: action === "approve" ? selectedRole : null,
+        role_codes: action === "approve" ? selectedRoles : [],
       }),
     });
     if (!response.ok) {
@@ -239,6 +268,31 @@ function App() {
           ? "Решение сохранено. Пользователю отправлена персональная ссылка на вход."
           : "Решение сохранено. Пользователь уведомлен."),
     );
+    await loadAll();
+  }
+
+  async function banApplication(id: number) {
+    const application = applications.find((item) => item.id === id);
+    const displayName = application?.user.username
+      ? `@${application.user.username}`
+      : application?.user.first_name ?? `заявку №${id}`;
+    if (!window.confirm(`Заблокировать ${displayName}? Пользователь потеряет доступ к группе и новым заявкам.`)) {
+      return;
+    }
+
+    setError(null);
+    setFeedback(null);
+    const response = await fetch(`${apiBaseUrl}/applications/${id}/ban`, {
+      method: "POST",
+      headers: { ...authHeaders(initData), "Content-Type": "application/json" },
+      body: JSON.stringify({ comment: comments[id]?.trim() || null, role_codes: [] }),
+    });
+    if (!response.ok) {
+      setError(`Не удалось заблокировать пользователя: ${await getApiError(response)}`);
+      return;
+    }
+    const result = await response.json();
+    setFeedback(result.warning ?? "Пользователь заблокирован.");
     await loadAll();
   }
 
@@ -262,19 +316,38 @@ function App() {
     );
   }
 
-  async function updateParticipantRole(participantId: number, roleCode: string) {
+  function toggleApplicationRole(applicationId: number, roleCode: string) {
+    setApplicationRoles((current) => {
+      const selected = new Set(current[applicationId] ?? []);
+      if (selected.has(roleCode)) selected.delete(roleCode);
+      else selected.add(roleCode);
+      return { ...current, [applicationId]: Array.from(selected) };
+    });
+  }
+
+  function toggleParticipantRole(participantId: number, roleCode: string) {
+    setParticipantRoleDrafts((current) => {
+      const selected = new Set(current[participantId] ?? []);
+      if (selected.has(roleCode)) selected.delete(roleCode);
+      else selected.add(roleCode);
+      return { ...current, [participantId]: Array.from(selected) };
+    });
+  }
+
+  async function updateParticipantRoles(participantId: number) {
     setError(null);
     setFeedback(null);
-    const response = await fetch(`${apiBaseUrl}/participants/${participantId}/role`, {
+    const response = await fetch(`${apiBaseUrl}/participants/${participantId}/roles`, {
       method: "PUT",
       headers: { ...authHeaders(initData), "Content-Type": "application/json" },
-      body: JSON.stringify({ role_code: roleCode }),
+      body: JSON.stringify({ role_codes: participantRoleDrafts[participantId] ?? [] }),
     });
     if (!response.ok) {
-      setError(`Не удалось назначить роль: ${await getApiError(response)}`);
+      setError(`Не удалось обновить роли: ${await getApiError(response)}`);
       return;
     }
-    setFeedback("Роль участника обновлена.");
+    setFeedback("Роли участника обновлены.");
+    setEditingParticipantId(null);
     await loadAll();
   }
 
@@ -438,7 +511,7 @@ function App() {
                   <span>{item.user.first_name ?? "Без имени"}</span>
                   <span>{item.user.username ? `@${item.user.username}` : `ID ${item.user.telegram_id}`}</span>
                   <span>Возраст: {item.age ?? "не указан"}</span>
-                  {item.roles.length > 0 && <span>Роль: {item.roles.map((role) => role.title).join(", ")}</span>}
+                  {item.roles.length > 0 && <span>Роли: {item.roles.map((role) => role.title).join(", ")}</span>}
                 </div>
                 <dl>
                   {Object.entries(item.answers).map(([key, value]) => (
@@ -488,22 +561,34 @@ function App() {
 
                 {item.status === "pending" ? (
                   <div className="review-block">
-                    <label htmlFor={`role-${item.id}`}>Роль после одобрения</label>
-                    <select id={`role-${item.id}`} value={applicationRoles[item.id] ?? ""} onChange={(event) => setApplicationRoles((current) => ({ ...current, [item.id]: event.target.value }))}>
-                      <option value="">Выберите роль</option>
-                      {roles.map((role) => <option key={role.code} value={role.code}>{role.title}</option>)}
-                    </select>
+                    <label>Роли после одобрения</label>
+                    <div className="role-choice-grid application-role-options">
+                      {roles.map((role) => {
+                        const checked = (applicationRoles[item.id] ?? []).includes(role.code);
+                        return (
+                          <label className={checked ? "selected" : ""} key={role.code}>
+                            <input type="checkbox" checked={checked} onChange={() => toggleApplicationRole(item.id, role.code)} />
+                            <span className="check-box">{checked && <Check size={15} />}</span>
+                            <span>{role.title}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
                     <label htmlFor={`comment-${item.id}`}>Комментарий пользователю (необязательно)</label>
                     <textarea id={`comment-${item.id}`} value={comments[item.id] ?? ""} onChange={(event) => setComments((current) => ({ ...current, [item.id]: event.target.value }))} rows={3} />
                     <div className="actions">
                       <button className="approve" onClick={() => review(item.id, "approve")}>Одобрить</button>
                       <button className="reject" onClick={() => review(item.id, "reject")}>Отклонить</button>
+                      <button className="ban-button" onClick={() => banApplication(item.id)}><ShieldBan size={17} /> Забанить</button>
                     </div>
                   </div>
                 ) : (
                   <div className="review-result">
                     {item.admin_comment && <p><strong>Комментарий:</strong> {item.admin_comment}</p>}
-                    <button onClick={() => resendNotification(item.id)}>Отправить уведомление повторно</button>
+                    <div className="actions">
+                      {["approved", "rejected"].includes(item.status) && <button onClick={() => resendNotification(item.id)}>Отправить уведомление повторно</button>}
+                      {!item.user.is_banned && <button className="ban-button" onClick={() => banApplication(item.id)}><ShieldBan size={17} /> Забанить</button>}
+                    </div>
                   </div>
                 )}
               </article>
@@ -516,26 +601,62 @@ function App() {
         <section className="section-content">
           <div className="section-heading">
             <div><h2>Участники</h2><p>Все пользователи, сохранившиеся в базе</p></div>
-            <span className="count">{participants.length}</span>
+            <span className="count">{filteredParticipants.length}</span>
           </div>
+          <label className="participant-search">
+            <Search size={18} />
+            <input
+              type="search"
+              placeholder="Поиск по имени или @username"
+              value={participantSearch}
+              onChange={(event) => setParticipantSearch(event.target.value)}
+            />
+          </label>
           <div className="participants-table">
-            <div className="participant-row table-head"><span>Пользователь</span><span>Статус</span><span>Роль</span></div>
-            {participants.map((participant) => (
-              <div className="participant-row" key={participant.id}>
-                <div className="participant-name">
-                  <strong>{[participant.first_name, participant.last_name].filter(Boolean).join(" ") || "Без имени"}</strong>
-                  <span>{participant.username ? `@${participant.username}` : `Telegram ID: ${participant.telegram_id}`}</span>
+            <div className="participant-row table-head"><span>Пользователь</span><span>Статус</span><span>Выданные роли</span><span>Управление</span></div>
+            {filteredParticipants.map((participant) => (
+              <React.Fragment key={participant.id}>
+                <div className="participant-row">
+                  <div className="participant-name">
+                    <strong>{[participant.first_name, participant.last_name].filter(Boolean).join(" ") || "Без имени"}</strong>
+                    <span>{participant.username ? `@${participant.username}` : `Telegram ID: ${participant.telegram_id}`}</span>
+                  </div>
+                  <span className={`participant-status ${participant.is_banned ? "banned" : participant.latest_application_status ?? "none"}`}>
+                    {participant.is_banned ? "Заблокирован" : participant.latest_application_status ? participantStatusLabels[participant.latest_application_status] : "Без заявки"}
+                  </span>
+                  <div className="role-badges">
+                    {participant.roles.map((role) => <span key={role.code}>{role.title}</span>)}
+                    {participant.roles.length === 0 && <em>Нет ролей</em>}
+                  </div>
+                  <button
+                    className={`manage-roles ${editingParticipantId === participant.id ? "active" : ""}`}
+                    disabled={participant.is_banned}
+                    title={participant.is_banned ? "Заблокированному пользователю нельзя назначать роли" : "Управление ролями"}
+                    onClick={() => setEditingParticipantId((current) => current === participant.id ? null : participant.id)}
+                  >
+                    <SlidersHorizontal size={17} /> Роли
+                  </button>
                 </div>
-                <span className={`participant-status ${participant.latest_application_status ?? "none"}`}>
-                  {participant.latest_application_status ? participantStatusLabels[participant.latest_application_status] : "Без заявки"}
-                </span>
-                <select value={participant.roles[0]?.code ?? ""} onChange={(event) => updateParticipantRole(participant.id, event.target.value)}>
-                  <option value="" disabled>Выберите роль</option>
-                  {roles.map((role) => <option key={role.code} value={role.code}>{role.title}</option>)}
-                </select>
-              </div>
+                {editingParticipantId === participant.id && (
+                  <div className="participant-role-editor">
+                    <div className="role-choice-grid">
+                      {roles.map((role) => {
+                        const checked = (participantRoleDrafts[participant.id] ?? []).includes(role.code);
+                        return (
+                          <label className={checked ? "selected" : ""} key={role.code}>
+                            <input type="checkbox" checked={checked} onChange={() => toggleParticipantRole(participant.id, role.code)} />
+                            <span className="check-box">{checked && <Check size={15} />}</span>
+                            <span>{role.title}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <button className="save-permissions" onClick={() => updateParticipantRoles(participant.id)}><Save size={17} /> Сохранить роли</button>
+                  </div>
+                )}
+              </React.Fragment>
             ))}
-            {participants.length === 0 && <div className="empty">Пользователей пока нет.</div>}
+            {filteredParticipants.length === 0 && <div className="empty">Ничего не найдено.</div>}
           </div>
         </section>
       )}

@@ -92,30 +92,31 @@ async def moderate_forum_topic(message: Message) -> None:
         if admin_result.scalar_one_or_none() is not None:
             return
 
-        permissions_result = await session.execute(
-            select(TopicRolePermission.role_id).where(TopicRolePermission.topic_id == topic.id)
-        )
-        allowed_role_ids = set(permissions_result.scalars().all())
-        if not allowed_role_ids:
-            return
-
         user_result = await session.execute(select(User).where(User.telegram_id == message.from_user.id))
         user = user_result.scalar_one_or_none()
-        if user is not None:
-            whitelist_result = await session.execute(
-                select(TopicWhitelist.id).where(
-                    TopicWhitelist.topic_id == topic.id,
-                    TopicWhitelist.user_id == user.id,
-                )
+        if user is None or not user.is_banned:
+            permissions_result = await session.execute(
+                select(TopicRolePermission.role_id).where(TopicRolePermission.topic_id == topic.id)
             )
-            if whitelist_result.scalar_one_or_none() is not None:
+            allowed_role_ids = set(permissions_result.scalars().all())
+            if not allowed_role_ids:
                 return
 
-            user_roles_result = await session.execute(
-                select(UserRole.role_id).where(UserRole.user_id == user.id)
-            )
-            if allowed_role_ids.intersection(user_roles_result.scalars().all()):
-                return
+            if user is not None:
+                whitelist_result = await session.execute(
+                    select(TopicWhitelist.id).where(
+                        TopicWhitelist.topic_id == topic.id,
+                        TopicWhitelist.user_id == user.id,
+                    )
+                )
+                if whitelist_result.scalar_one_or_none() is not None:
+                    return
+
+                user_roles_result = await session.execute(
+                    select(UserRole.role_id).where(UserRole.user_id == user.id)
+                )
+                if allowed_role_ids.intersection(user_roles_result.scalars().all()):
+                    return
 
     try:
         await message.delete()
@@ -124,14 +125,21 @@ async def moderate_forum_topic(message: Message) -> None:
 
     display_name = html.escape(message.from_user.full_name)
     mention = f'<a href="tg://user?id={message.from_user.id}">{display_name}</a>'
+    warning_text = (
+        "⛔ <b>Доступ к сообществу заблокирован</b>"
+        if user is not None and user.is_banned
+        else "⛔ <b>Нет доступа к публикации</b>"
+    )
+    warning_detail = (
+        f"{mention}, вы не можете публиковать сообщения."
+        if user is not None and user.is_banned
+        else f"{mention}, для этой темы нужна разрешенная роль."
+    )
     try:
         warning = await message.bot.send_message(
             chat_id=message.chat.id,
             message_thread_id=message.message_thread_id,
-            text=(
-                "⛔ <b>Нет доступа к публикации</b>\n"
-                f"{mention}, для этой темы нужна разрешенная роль."
-            ),
+            text=f"{warning_text}\n{warning_detail}",
             parse_mode="HTML",
         )
         asyncio.create_task(delete_warning_later(message.bot, message.chat.id, warning.message_id))

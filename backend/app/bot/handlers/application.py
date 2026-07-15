@@ -7,7 +7,7 @@ from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 from app.bot.keyboards import portfolio_keyboard
 from app.bot.states import ApplicationForm
 from app.db.session import SessionLocal
-from app.services.application_service import create_pending_application
+from app.services.application_service import UserBannedError, create_pending_application, is_user_banned
 
 router = Router()
 
@@ -30,18 +30,32 @@ async def answer_form(message: Message, text: str, **kwargs) -> None:
 
 @router.message(F.text == "Подать заявку")
 async def start_application(message: Message, state: FSMContext) -> None:
-    await begin_application(message, state)
+    await begin_application(message, state, message.from_user.id if message.from_user else None)
 
 
 @router.callback_query(F.data == "start_application")
 async def start_application_callback(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     if isinstance(callback.message, Message):
-        await begin_application(callback.message, state)
+        await begin_application(callback.message, state, callback.from_user.id)
 
 
-async def begin_application(message: Message, state: FSMContext) -> None:
+async def begin_application(message: Message, state: FSMContext, telegram_id: int | None) -> None:
     await state.clear()
+    if telegram_id is not None:
+        async with SessionLocal() as session:
+            if await is_user_banned(session, telegram_id):
+                await answer_form(
+                    message,
+                    form_message(
+                        "⛔",
+                        "Доступ ограничен",
+                        "Вы не можете подать новую заявку в Prod.by.",
+                    ),
+                    reply_markup=ReplyKeyboardRemove(),
+                )
+                return
+
     await state.update_data(files=[])
     await state.set_state(ApplicationForm.age)
     await answer_form(
@@ -262,14 +276,27 @@ async def submit_application(message: Message, state: FSMContext) -> None:
         return
 
     async with SessionLocal() as session:
-        application = await create_pending_application(
-            session=session,
-            tg_user=message.from_user,
-            age=data["age"],
-            music_role=None,
-            answers=answers,
-            files=data.get("files", []),
-        )
+        try:
+            application = await create_pending_application(
+                session=session,
+                tg_user=message.from_user,
+                age=data["age"],
+                music_role=None,
+                answers=answers,
+                files=data.get("files", []),
+            )
+        except UserBannedError:
+            await state.clear()
+            await answer_form(
+                message,
+                form_message(
+                    "⛔",
+                    "Доступ ограничен",
+                    "Вы не можете отправить заявку в Prod.by.",
+                ),
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return
 
     await state.clear()
     await answer_form(

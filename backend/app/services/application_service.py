@@ -5,6 +5,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Application, ApplicationFile, User
 
 
+class UserBannedError(ValueError):
+    pass
+
+
+async def is_user_banned(session: AsyncSession, telegram_id: int) -> bool:
+    result = await session.execute(select(User.is_banned).where(User.telegram_id == telegram_id))
+    return bool(result.scalar_one_or_none())
+
+
 async def get_or_create_user(session: AsyncSession, tg_user: TelegramUser) -> User:
     result = await session.execute(select(User).where(User.telegram_id == tg_user.id))
     user = result.scalar_one_or_none()
@@ -34,6 +43,8 @@ async def create_pending_application(
     files: list[dict],
 ) -> Application:
     user = await get_or_create_user(session, tg_user)
+    if user.is_banned:
+        raise UserBannedError("Доступ к подаче заявок заблокирован")
     application = Application(
         user_id=user.id,
         status="pending",
