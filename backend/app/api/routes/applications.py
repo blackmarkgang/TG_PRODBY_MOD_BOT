@@ -58,6 +58,7 @@ async def list_applications(
             "age": item.age,
             "music_role": item.music_role,
             "answers": item.answers_json,
+            "answer_labels": item.answer_labels_json,
             "created_at": item.created_at,
             "admin_comment": item.admin_comment,
             "reviewed_at": item.reviewed_at,

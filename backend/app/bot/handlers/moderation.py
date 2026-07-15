@@ -10,7 +10,15 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.config import settings
-from app.db.models import AdminUser, ForumTopic, TopicRolePermission, TopicWhitelist, User, UserRole
+from app.db.models import (
+    AdminUser,
+    AuditLog,
+    ForumTopic,
+    TopicRolePermission,
+    TopicWhitelist,
+    User,
+    UserRole,
+)
 from app.db.session import SessionLocal
 
 router = Router()
@@ -161,12 +169,32 @@ async def moderate_forum_topic(message: Message) -> None:
                 if allowed_role_ids.intersection(user_roles_result.scalars().all()):
                     return
 
+        should_act = claim_moderation_action(message.chat.id, message.from_user.id)
+        if should_act:
+            session.add(
+                AuditLog(
+                    action="moderation_denied",
+                    entity_type="user",
+                    entity_id=user.id if user is not None else None,
+                    payload_json={
+                        "telegram_id": message.from_user.id,
+                        "username": message.from_user.username,
+                        "chat_id": message.chat.id,
+                        "topic_id": topic.id,
+                        "topic_title": topic.title,
+                        "reason": "banned" if user is not None and user.is_banned else "missing_role",
+                        "timeout_seconds": settings.moderation_timeout_seconds,
+                    },
+                )
+            )
+            await session.commit()
+
     try:
         await message.delete()
     except Exception:
         logger.exception("Failed to delete a message without topic permission")
 
-    if not claim_moderation_action(message.chat.id, message.from_user.id):
+    if not should_act:
         return
 
     timeout_applied = False

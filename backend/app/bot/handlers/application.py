@@ -1,11 +1,14 @@
 import re
+from html import escape
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
+from sqlalchemy import select
 
 from app.bot.keyboards import portfolio_keyboard
 from app.bot.states import ApplicationForm
+from app.db.models import ApplicationQuestion
 from app.db.session import SessionLocal
 from app.services.application_service import UserBannedError, create_pending_application, is_user_banned
 
@@ -13,19 +16,40 @@ router = Router()
 
 URL_PATTERN = re.compile(r"https?://[^\s]+", re.IGNORECASE)
 MAX_ATTACHMENTS = 10
-TOTAL_STEPS = 5
 
 
-def form_message(emoji: str, title: str, body: str, step: int | None = None) -> str:
+def form_message(
+    emoji: str,
+    title: str,
+    body: str,
+    step: int | None = None,
+    total_steps: int | None = None,
+) -> str:
     parts = [f"{emoji} <b>{title}</b>"]
-    if step is not None:
-        parts.append(f"<i>Шаг {step} из {TOTAL_STEPS}</i>")
+    if step is not None and total_steps is not None:
+        parts.append(f"<i>Шаг {step} из {total_steps}</i>")
     parts.append(body)
     return "\n\n".join(parts)
 
 
 async def answer_form(message: Message, text: str, **kwargs) -> None:
     await message.answer(text, parse_mode="HTML", **kwargs)
+
+
+async def load_questions() -> list[dict]:
+    async with SessionLocal() as session:
+        result = await session.execute(
+            select(ApplicationQuestion).order_by(ApplicationQuestion.sort_order)
+        )
+        return [
+            {
+                "code": question.code,
+                "text": question.text,
+                "help_text": question.help_text,
+                "answer_type": question.answer_type,
+            }
+            for question in result.scalars().all()
+        ]
 
 
 @router.message(F.text == "Подать заявку")
@@ -56,89 +80,77 @@ async def begin_application(message: Message, state: FSMContext, telegram_id: in
                 )
                 return
 
-    await state.update_data(files=[])
-    await state.set_state(ApplicationForm.age)
+    questions = await load_questions()
+    await state.update_data(
+        files=[],
+        questions=questions,
+        question_index=0,
+        question_answers={},
+    )
+    if questions:
+        await state.set_state(ApplicationForm.question)
+        await show_question(message, state)
+    else:
+        await show_portfolio_step(message, state)
+
+
+async def show_question(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    questions = data["questions"]
+    index = data["question_index"]
+    question = questions[index]
+    body = escape(question.get("help_text") or "Отправьте ответ сообщением.")
+    if question["answer_type"] == "number":
+        body += "\n\n<i>Ответ должен быть числом.</i>"
     await answer_form(
         message,
         form_message(
-            "🎂",
-            "Сколько вам лет?",
-            "Отправьте возраст одним числом.",
-            step=1,
+            "💬",
+            escape(question["text"]),
+            body,
+            step=index + 1,
+            total_steps=len(questions) + 1,
         ),
         reply_markup=ReplyKeyboardRemove(),
     )
 
 
-@router.message(ApplicationForm.age)
-async def receive_age(message: Message, state: FSMContext) -> None:
-    if not message.text or not message.text.isdigit():
-        await answer_form(message, form_message("⚠️", "Нужен возраст числом", "Например: <b>24</b>."))
+@router.message(ApplicationForm.question)
+async def receive_question_answer(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    questions = data["questions"]
+    index = data["question_index"]
+    question = questions[index]
+    answer = message.text.strip() if message.text else ""
+    if not answer:
+        await answer_form(
+            message,
+            form_message("⚠️", "Нужен текстовый ответ", "Отправьте ответ обычным сообщением."),
+        )
+        return
+    if question["answer_type"] == "number" and not answer.isdigit():
+        await answer_form(message, form_message("⚠️", "Нужно число", "Например: <b>24</b>."))
+        return
+    if question["code"] == "age" and question["answer_type"] == "number" and not 1 <= int(answer) <= 120:
+        await answer_form(
+            message,
+            form_message("⚠️", "Проверьте возраст", "Допустимое значение: от 1 до 120."),
+        )
         return
 
-    age = int(message.text)
-    if not 1 <= age <= 120:
-        await answer_form(message, form_message("⚠️", "Проверьте возраст", "Допустимое значение: от 1 до 120."))
-        return
-
-    await state.update_data(age=age)
-    await state.set_state(ApplicationForm.role_details)
-    await answer_form(
-        message,
-        form_message(
-            "🎙",
-            "Расскажите о себе",
-            "Чем вы занимаетесь в музыке или смежных творческих направлениях? Чем можете быть полезны сообществу?",
-            step=2,
-        ),
-    )
+    answers = dict(data.get("question_answers", {}))
+    answers[question["code"]] = answer
+    next_index = index + 1
+    await state.update_data(question_answers=answers, question_index=next_index)
+    if next_index < len(questions):
+        await show_question(message, state)
+    else:
+        await show_portfolio_step(message, state)
 
 
-@router.message(ApplicationForm.role_details)
-async def receive_role_details(message: Message, state: FSMContext) -> None:
-    if not message.text:
-        await answer_form(message, form_message("⚠️", "Нужен текстовый ответ", "Расскажите о себе в нескольких предложениях."))
-        return
-
-    await state.update_data(role_details=message.text)
-    await state.set_state(ApplicationForm.motivation)
-    await answer_form(
-        message,
-        form_message(
-            "💬",
-            "Почему вы хотите попасть в Prod.by?",
-            "Напишите коротко и своими словами.",
-            step=3,
-        ),
-    )
-
-
-@router.message(ApplicationForm.motivation)
-async def receive_motivation(message: Message, state: FSMContext) -> None:
-    if not message.text:
-        await answer_form(message, form_message("⚠️", "Нужен текстовый ответ", "Опишите вашу мотивацию в нескольких предложениях."))
-        return
-
-    await state.update_data(motivation=message.text)
-    await state.set_state(ApplicationForm.expectations)
-    await answer_form(
-        message,
-        form_message(
-            "🎯",
-            "Что вы ожидаете от участия?",
-            "Расскажите, что хотите получить от сообщества и чем готовы делиться.",
-            step=4,
-        ),
-    )
-
-
-@router.message(ApplicationForm.expectations)
-async def receive_expectations(message: Message, state: FSMContext) -> None:
-    if not message.text:
-        await answer_form(message, form_message("⚠️", "Нужен текстовый ответ", "Опишите ваши ожидания от участия."))
-        return
-
-    await state.update_data(expectations=message.text)
+async def show_portfolio_step(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    questions = data.get("questions", [])
     await state.set_state(ApplicationForm.portfolio)
     await answer_form(
         message,
@@ -146,7 +158,8 @@ async def receive_expectations(message: Message, state: FSMContext) -> None:
             "📎",
             "Добавьте примеры работ",
             "Прикрепите до 10 файлов или ссылок. Этот шаг необязательный: когда закончите, нажмите <b>«Готово»</b>.",
-            step=5,
+            step=len(questions) + 1,
+            total_steps=len(questions) + 1,
         ),
         reply_markup=portfolio_keyboard(),
     )
@@ -262,11 +275,18 @@ def extract_file_items(message: Message) -> list[dict]:
 
 async def submit_application(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
-    answers = {
-        key: data[key]
-        for key in ("role_details", "motivation", "expectations")
-        if data.get(key)
+    answers = dict(data.get("question_answers", {}))
+    questions = data.get("questions", [])
+    answer_labels = {
+        question["code"]: question["text"]
+        for question in questions
+        if question["code"] in answers
     }
+    age_raw = answers.get("age")
+    age = int(age_raw) if age_raw is not None and age_raw.isdigit() else None
+    if age is not None:
+        answers.pop("age", None)
+        answer_labels.pop("age", None)
 
     if message.from_user is None:
         await answer_form(
@@ -280,9 +300,10 @@ async def submit_application(message: Message, state: FSMContext) -> None:
             application = await create_pending_application(
                 session=session,
                 tg_user=message.from_user,
-                age=data["age"],
+                age=age,
                 music_role=None,
                 answers=answers,
+                answer_labels=answer_labels,
                 files=data.get("files", []),
             )
         except UserBannedError:

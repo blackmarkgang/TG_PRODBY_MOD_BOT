@@ -1,12 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  Activity,
+  ArrowDown,
+  ArrowUp,
+  BadgeCheck,
   Check,
   Download,
   ExternalLink,
   Eye,
   FileText,
   Hash,
+  ListChecks,
   Plus,
   Play,
   RefreshCw,
@@ -15,6 +20,7 @@ import {
   Settings,
   ShieldBan,
   SlidersHorizontal,
+  Trash2,
   Users,
 } from "lucide-react";
 import "./styles.css";
@@ -31,7 +37,7 @@ declare global {
   }
 }
 
-type Role = { code: string; title: string };
+type Role = { id?: number; code: string; title: string };
 
 type ApplicationFile = {
   id: number;
@@ -48,6 +54,7 @@ type Application = {
   status: string;
   age: number | null;
   answers: Record<string, string>;
+  answer_labels: Record<string, string>;
   files: ApplicationFile[];
   roles: Role[];
   created_at: string;
@@ -83,7 +90,34 @@ type Topic = {
   allowed_roles: Role[];
 };
 
-type Tab = "applications" | "participants" | "settings";
+type Question = {
+  id: number;
+  code: string;
+  text: string;
+  help_text: string | null;
+  answer_type: "text" | "number";
+  sort_order: number;
+};
+
+type AuditEntry = {
+  id: number;
+  action: string;
+  entity_type: string;
+  entity_id: number | null;
+  payload: Record<string, unknown>;
+  admin_telegram_id: number | null;
+  created_at: string;
+};
+
+type BotStatus = {
+  telegram_api: boolean;
+  bot_id: number | null;
+  username: string | null;
+  mode: string;
+};
+
+type Tab = "applications" | "participants" | "settings" | "logs";
+type SettingsSection = "topics" | "roles" | "questions";
 type PreviewKind = "audio" | "video" | "image" | "pdf" | null;
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
@@ -121,6 +155,27 @@ const fileTypeLabels: Record<string, string> = {
   url: "Ссылка",
 };
 
+const auditActionLabels: Record<string, string> = {
+  approve: "Заявка одобрена",
+  reject: "Заявка отклонена",
+  ban_user: "Пользователь заблокирован",
+  application_submitted: "Заявка отправлена",
+  assign_roles: "Роли участника изменены",
+  set_topic_roles: "Права темы изменены",
+  create_topic: "Тема добавлена",
+  update_topic: "Тема обновлена",
+  rename_topic: "Тема переименована",
+  create_role: "Роль создана",
+  update_role: "Роль изменена",
+  delete_role: "Роль удалена",
+  create_question: "Вопрос добавлен",
+  update_question: "Вопрос изменен",
+  delete_question: "Вопрос удален",
+  reorder_questions: "Порядок вопросов изменен",
+  moderation_denied: "Сообщение удалено модерацией",
+  resend_notification: "Уведомление отправлено повторно",
+};
+
 function authHeaders(initData: string): Record<string, string> {
   if (initData) return { Authorization: `tma ${initData}` };
   return devAdminId ? { "X-Dev-Admin-ID": devAdminId } : {};
@@ -149,6 +204,16 @@ function formatDate(value: string): string {
   }).format(new Date(value));
 }
 
+function formatLogDate(value: string): string {
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(value));
+}
+
 function getPreviewKind(file: ApplicationFile): PreviewKind {
   const mimeType = file.mime_type ?? "";
   if (file.file_type === "audio" || file.file_type === "voice" || mimeType.startsWith("audio/")) {
@@ -162,10 +227,20 @@ function getPreviewKind(file: ApplicationFile): PreviewKind {
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>("applications");
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("topics");
   const [applications, setApplications] = useState<Application[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [logs, setLogs] = useState<AuditEntry[]>([]);
+  const [botStatus, setBotStatus] = useState<BotStatus | null>(null);
+  const [roleTitleDrafts, setRoleTitleDrafts] = useState<Record<number, string>>({});
+  const [questionDrafts, setQuestionDrafts] = useState<Record<number, Question>>({});
+  const [newRoleTitle, setNewRoleTitle] = useState("");
+  const [newQuestionText, setNewQuestionText] = useState("");
+  const [newQuestionHelp, setNewQuestionHelp] = useState("");
+  const [newQuestionType, setNewQuestionType] = useState<"text" | "number">("text");
   const [selectedTopicId, setSelectedTopicId] = useState<number | null>(null);
   const [topicRoleDrafts, setTopicRoleDrafts] = useState<Record<number, string[]>>({});
   const [topicTitleDrafts, setTopicTitleDrafts] = useState<Record<number, string>>({});
@@ -206,16 +281,33 @@ function App() {
   async function loadAll() {
     setError(null);
     const headers = authHeaders(initData);
-    const [applicationsResponse, participantsResponse, rolesResponse, topicsResponse] = await Promise.all([
+    const [
+      applicationsResponse,
+      participantsResponse,
+      rolesResponse,
+      topicsResponse,
+      questionsResponse,
+      logsResponse,
+      botStatusResponse,
+    ] = await Promise.all([
       fetch(`${apiBaseUrl}/applications`, { headers }),
       fetch(`${apiBaseUrl}/participants`, { headers }),
-      fetch(`${apiBaseUrl}/participants/roles`, { headers }),
+      fetch(`${apiBaseUrl}/settings/roles`, { headers }),
       fetch(`${apiBaseUrl}/settings/topics`, { headers }),
+      fetch(`${apiBaseUrl}/settings/questions`, { headers }),
+      fetch(`${apiBaseUrl}/logs`, { headers }),
+      fetch(`${apiBaseUrl}/logs/status`, { headers }),
     ]);
 
-    const failedResponse = [applicationsResponse, participantsResponse, rolesResponse, topicsResponse].find(
-      (response) => !response.ok,
-    );
+    const failedResponse = [
+      applicationsResponse,
+      participantsResponse,
+      rolesResponse,
+      topicsResponse,
+      questionsResponse,
+      logsResponse,
+      botStatusResponse,
+    ].find((response) => !response.ok);
     if (failedResponse) {
       setError(`Не удалось загрузить данные: ${await getApiError(failedResponse)}`);
       return;
@@ -223,9 +315,20 @@ function App() {
 
     const loadedApplications: Application[] = await applicationsResponse.json();
     const loadedParticipants: Participant[] = await participantsResponse.json();
+    const loadedRoles: Role[] = await rolesResponse.json();
+    const loadedQuestions: Question[] = await questionsResponse.json();
     setApplications(loadedApplications);
     setParticipants(loadedParticipants);
-    setRoles(await rolesResponse.json());
+    setRoles(loadedRoles);
+    setQuestions(loadedQuestions);
+    setLogs(await logsResponse.json());
+    setBotStatus(await botStatusResponse.json());
+    setRoleTitleDrafts(Object.fromEntries(
+      loadedRoles.filter((role) => role.id !== undefined).map((role) => [role.id!, role.title]),
+    ));
+    setQuestionDrafts(Object.fromEntries(
+      loadedQuestions.map((question) => [question.id, question]),
+    ));
     setApplicationRoles(Object.fromEntries(
       loadedApplications.map((application) => [application.id, application.roles.map((role) => role.code)]),
     ));
@@ -420,6 +523,144 @@ function App() {
     await loadAll();
   }
 
+  async function createRole() {
+    const title = newRoleTitle.trim();
+    if (!title) {
+      setError("Укажите название роли.");
+      return;
+    }
+    const response = await fetch(`${apiBaseUrl}/settings/roles`, {
+      method: "POST",
+      headers: { ...authHeaders(initData), "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    if (!response.ok) {
+      setError(`Не удалось создать роль: ${await getApiError(response)}`);
+      return;
+    }
+    setNewRoleTitle("");
+    setFeedback("Роль создана.");
+    await loadAll();
+  }
+
+  async function saveRole(role: Role) {
+    if (role.id === undefined) return;
+    const title = roleTitleDrafts[role.id]?.trim();
+    if (!title) {
+      setError("Название роли не может быть пустым.");
+      return;
+    }
+    const response = await fetch(`${apiBaseUrl}/settings/roles/${role.id}`, {
+      method: "PATCH",
+      headers: { ...authHeaders(initData), "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    if (!response.ok) {
+      setError(`Не удалось сохранить роль: ${await getApiError(response)}`);
+      return;
+    }
+    setFeedback("Роль обновлена.");
+    await loadAll();
+  }
+
+  async function deleteRole(role: Role) {
+    if (role.id === undefined || !window.confirm(`Удалить роль «${role.title}»? Она будет снята со всех участников и тем.`)) return;
+    const response = await fetch(`${apiBaseUrl}/settings/roles/${role.id}`, {
+      method: "DELETE",
+      headers: authHeaders(initData),
+    });
+    if (!response.ok) {
+      setError(`Не удалось удалить роль: ${await getApiError(response)}`);
+      return;
+    }
+    setFeedback("Роль удалена.");
+    await loadAll();
+  }
+
+  async function createQuestion() {
+    const text = newQuestionText.trim();
+    if (!text) {
+      setError("Введите текст вопроса.");
+      return;
+    }
+    const response = await fetch(`${apiBaseUrl}/settings/questions`, {
+      method: "POST",
+      headers: { ...authHeaders(initData), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+        help_text: newQuestionHelp.trim() || null,
+        answer_type: newQuestionType,
+      }),
+    });
+    if (!response.ok) {
+      setError(`Не удалось добавить вопрос: ${await getApiError(response)}`);
+      return;
+    }
+    setNewQuestionText("");
+    setNewQuestionHelp("");
+    setNewQuestionType("text");
+    setFeedback("Вопрос добавлен в конец анкеты.");
+    await loadAll();
+  }
+
+  async function saveQuestion(questionId: number) {
+    const question = questionDrafts[questionId];
+    if (!question?.text.trim()) {
+      setError("Текст вопроса не может быть пустым.");
+      return;
+    }
+    const response = await fetch(`${apiBaseUrl}/settings/questions/${questionId}`, {
+      method: "PATCH",
+      headers: { ...authHeaders(initData), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: question.text.trim(),
+        help_text: question.help_text?.trim() || null,
+        answer_type: question.answer_type,
+      }),
+    });
+    if (!response.ok) {
+      setError(`Не удалось сохранить вопрос: ${await getApiError(response)}`);
+      return;
+    }
+    setFeedback("Вопрос обновлен.");
+    await loadAll();
+  }
+
+  async function deleteQuestion(question: Question) {
+    if (!window.confirm(`Удалить вопрос «${question.text}»?`)) return;
+    const response = await fetch(`${apiBaseUrl}/settings/questions/${question.id}`, {
+      method: "DELETE",
+      headers: authHeaders(initData),
+    });
+    if (!response.ok) {
+      setError(`Не удалось удалить вопрос: ${await getApiError(response)}`);
+      return;
+    }
+    setFeedback("Вопрос удален.");
+    await loadAll();
+  }
+
+  async function moveQuestion(questionId: number, direction: -1 | 1) {
+    const index = questions.findIndex((question) => question.id === questionId);
+    const targetIndex = index + direction;
+    if (index < 0 || targetIndex < 0 || targetIndex >= questions.length) return;
+    const reordered = [...questions];
+    [reordered[index], reordered[targetIndex]] = [reordered[targetIndex], reordered[index]];
+    setQuestions(reordered);
+    const response = await fetch(`${apiBaseUrl}/settings/questions/order`, {
+      method: "PUT",
+      headers: { ...authHeaders(initData), "Content-Type": "application/json" },
+      body: JSON.stringify({ question_ids: reordered.map((question) => question.id) }),
+    });
+    if (!response.ok) {
+      setError(`Не удалось изменить порядок: ${await getApiError(response)}`);
+      await loadAll();
+      return;
+    }
+    setFeedback("Порядок вопросов обновлен.");
+    await loadAll();
+  }
+
   async function fetchFile(applicationId: number, file: ApplicationFile): Promise<Blob | null> {
     const response = await fetch(
       `${apiBaseUrl}/applications/${applicationId}/files/${file.id}/download`,
@@ -487,6 +728,9 @@ function App() {
         <button className={activeTab === "settings" ? "active" : ""} onClick={() => setActiveTab("settings")}>
           <Settings size={18} /> Настройки
         </button>
+        <button className={activeTab === "logs" ? "active" : ""} onClick={() => setActiveTab("logs")}>
+          <Activity size={18} /> Логи
+        </button>
       </nav>
 
       {error && <div className="message error">{error}</div>}
@@ -515,7 +759,7 @@ function App() {
                 </div>
                 <dl>
                   {Object.entries(item.answers).map(([key, value]) => (
-                    <React.Fragment key={key}><dt>{answerLabels[key] ?? key}</dt><dd>{value}</dd></React.Fragment>
+                    <React.Fragment key={key}><dt>{item.answer_labels[key] ?? answerLabels[key] ?? key}</dt><dd>{value}</dd></React.Fragment>
                   ))}
                 </dl>
 
@@ -663,73 +907,134 @@ function App() {
 
       {activeTab === "settings" && (
         <section className="section-content">
-          <div className="section-heading">
-            <div><h2>Права тем</h2><p>Роли, которым разрешено публиковать сообщения</p></div>
-            <span className="count">{topics.length}</span>
+          <nav className="settings-menu" aria-label="Разделы настроек">
+            <button className={settingsSection === "topics" ? "active" : ""} onClick={() => setSettingsSection("topics")}>
+              <Hash size={18} /><span><strong>Права тем</strong><small>Доступ к публикации</small></span>
+            </button>
+            <button className={settingsSection === "roles" ? "active" : ""} onClick={() => setSettingsSection("roles")}>
+              <BadgeCheck size={18} /><span><strong>Роли</strong><small>Создание и изменение</small></span>
+            </button>
+            <button className={settingsSection === "questions" ? "active" : ""} onClick={() => setSettingsSection("questions")}>
+              <ListChecks size={18} /><span><strong>Анкета</strong><small>Вопросы и порядок</small></span>
+            </button>
+          </nav>
+
+          {settingsSection === "topics" && (
+            <>
+              <div className="section-heading">
+                <div><h2>Права тем</h2><p>Роли, которым разрешено публиковать сообщения</p></div>
+                <span className="count">{topics.length}</span>
+              </div>
+              <div className="topic-settings">
+                <div className="topic-list" aria-label="Темы группы">
+                  {topics.map((topic) => (
+                    <button className={`topic-item ${selectedTopicId === topic.id ? "active" : ""}`} key={topic.id} onClick={() => setSelectedTopicId(topic.id)}>
+                      <Hash size={18} />
+                      <span><strong>{topic.title}</strong><small>ID {topic.message_thread_id}</small></span>
+                      <em>{topic.allowed_roles.length || "Все"}</em>
+                    </button>
+                  ))}
+                  {topics.length === 0 && <div className="empty compact">Темы появятся после новых сообщений в группе.</div>}
+                </div>
+                <div className="topic-editor">
+                  {selectedTopic ? (
+                    <>
+                      <div className="editor-heading"><div><span>Настройка темы</span><strong>{selectedTopic.title}</strong></div><Hash size={22} /></div>
+                      <label htmlFor={`topic-title-${selectedTopic.id}`}>Название в панели</label>
+                      <input id={`topic-title-${selectedTopic.id}`} value={topicTitleDrafts[selectedTopic.id] ?? selectedTopic.title} onChange={(event) => setTopicTitleDrafts((current) => ({ ...current, [selectedTopic.id]: event.target.value }))} />
+                      <div className="role-editor-heading"><strong>Кто может писать</strong><span>Если ничего не выбрано, писать могут все</span></div>
+                      <div className="role-options">
+                        {roles.map((role) => {
+                          const checked = (topicRoleDrafts[selectedTopic.id] ?? []).includes(role.code);
+                          return <label className={checked ? "selected" : ""} key={role.code}><input type="checkbox" checked={checked} onChange={() => toggleTopicRole(selectedTopic.id, role.code)} /><span className="check-box">{checked && <Check size={15} />}</span><span>{role.title}</span></label>;
+                        })}
+                      </div>
+                      <button className="save-permissions" onClick={() => saveTopicPermissions(selectedTopic)}><Save size={17} /> Сохранить права</button>
+                    </>
+                  ) : <div className="editor-empty"><Settings size={28} /><span>Выберите тему для настройки</span></div>}
+                </div>
+              </div>
+              <div className="manual-topic">
+                <div><strong>Добавить старую тему</strong><span>Для тем, которые бот еще не обнаружил</span></div>
+                <div className="manual-topic-form">
+                  <input inputMode="numeric" placeholder="ID темы" value={newTopicId} onChange={(event) => setNewTopicId(event.target.value)} />
+                  <input placeholder="Название темы" value={newTopicTitle} onChange={(event) => setNewTopicTitle(event.target.value)} />
+                  <button className="icon-button" onClick={createTopic} title="Добавить тему" aria-label="Добавить тему"><Plus size={19} /></button>
+                </div>
+              </div>
+            </>
+          )}
+
+          {settingsSection === "roles" && (
+            <>
+              <div className="section-heading"><div><h2>Настройка ролей</h2><p>Роли участников и права доступа к темам</p></div><span className="count">{roles.length}</span></div>
+              <div className="create-config-row">
+                <input placeholder="Название новой роли" value={newRoleTitle} onChange={(event) => setNewRoleTitle(event.target.value)} />
+                <button onClick={createRole}><Plus size={17} /> Добавить роль</button>
+              </div>
+              <div className="config-list">
+                {roles.map((role) => (
+                  <div className="config-row" key={role.code}>
+                    <div className="config-index"><BadgeCheck size={18} /></div>
+                    <input value={role.id === undefined ? role.title : roleTitleDrafts[role.id] ?? role.title} onChange={(event) => role.id !== undefined && setRoleTitleDrafts((current) => ({ ...current, [role.id!]: event.target.value }))} />
+                    <code>{role.code}</code>
+                    <div className="config-actions">
+                      <button className="icon-button" onClick={() => saveRole(role)} title="Сохранить роль"><Save size={17} /></button>
+                      <button className="icon-button danger-icon" onClick={() => deleteRole(role)} title="Удалить роль"><Trash2 size={17} /></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {settingsSection === "questions" && (
+            <>
+              <div className="section-heading"><div><h2>Настройка анкеты</h2><p>После вопросов бот отдельно предложит прикрепить файлы</p></div><span className="count">{questions.length}</span></div>
+              <div className="question-create">
+                <input placeholder="Текст нового вопроса" value={newQuestionText} onChange={(event) => setNewQuestionText(event.target.value)} />
+                <input placeholder="Подсказка пользователю (необязательно)" value={newQuestionHelp} onChange={(event) => setNewQuestionHelp(event.target.value)} />
+                <select value={newQuestionType} onChange={(event) => setNewQuestionType(event.target.value as "text" | "number")}><option value="text">Текст</option><option value="number">Число</option></select>
+                <button onClick={createQuestion}><Plus size={17} /> Добавить</button>
+              </div>
+              <div className="question-list">
+                {questions.map((question, index) => {
+                  const draft = questionDrafts[question.id] ?? question;
+                  return (
+                    <article className="question-row" key={question.id}>
+                      <div className="question-order"><strong>{index + 1}</strong><button className="icon-button" disabled={index === 0} onClick={() => moveQuestion(question.id, -1)} title="Поднять"><ArrowUp size={16} /></button><button className="icon-button" disabled={index === questions.length - 1} onClick={() => moveQuestion(question.id, 1)} title="Опустить"><ArrowDown size={16} /></button></div>
+                      <div className="question-fields">
+                        <input value={draft.text} onChange={(event) => setQuestionDrafts((current) => ({ ...current, [question.id]: { ...draft, text: event.target.value } }))} />
+                        <input placeholder="Подсказка" value={draft.help_text ?? ""} onChange={(event) => setQuestionDrafts((current) => ({ ...current, [question.id]: { ...draft, help_text: event.target.value } }))} />
+                      </div>
+                      <select value={draft.answer_type} onChange={(event) => setQuestionDrafts((current) => ({ ...current, [question.id]: { ...draft, answer_type: event.target.value as "text" | "number" } }))}><option value="text">Текст</option><option value="number">Число</option></select>
+                      <div className="config-actions"><button className="icon-button" onClick={() => saveQuestion(question.id)} title="Сохранить вопрос"><Save size={17} /></button><button className="icon-button danger-icon" onClick={() => deleteQuestion(question)} title="Удалить вопрос"><Trash2 size={17} /></button></div>
+                    </article>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </section>
+      )}
+
+      {activeTab === "logs" && (
+        <section className="section-content">
+          <div className="section-heading"><div><h2>Логи</h2><p>События бота, пользователей и администрации</p></div><span className="count">{logs.length}</span></div>
+          <div className="bot-status-bar">
+            <Activity size={20} />
+            <div><strong>Telegram API</strong><span>{botStatus?.username ? `@${botStatus.username}` : "Бот недоступен"} · режим {botStatus?.mode ?? "polling"}</span></div>
+            <em className={botStatus?.telegram_api ? "online" : "offline"}>{botStatus?.telegram_api ? "Доступен" : "Ошибка"}</em>
           </div>
-
-          <div className="topic-settings">
-            <div className="topic-list" aria-label="Темы группы">
-              {topics.map((topic) => (
-                <button
-                  className={`topic-item ${selectedTopicId === topic.id ? "active" : ""}`}
-                  key={topic.id}
-                  onClick={() => setSelectedTopicId(topic.id)}
-                >
-                  <Hash size={18} />
-                  <span><strong>{topic.title}</strong><small>ID {topic.message_thread_id}</small></span>
-                  <em>{topic.allowed_roles.length || "Все"}</em>
-                </button>
-              ))}
-              {topics.length === 0 && <div className="empty compact">Темы появятся после новых сообщений в группе.</div>}
-            </div>
-
-            <div className="topic-editor">
-              {selectedTopic ? (
-                <>
-                  <div className="editor-heading">
-                    <div><span>Настройка темы</span><strong>{selectedTopic.title}</strong></div>
-                    <Hash size={22} />
-                  </div>
-                  <label htmlFor={`topic-title-${selectedTopic.id}`}>Название в панели</label>
-                  <input
-                    id={`topic-title-${selectedTopic.id}`}
-                    value={topicTitleDrafts[selectedTopic.id] ?? selectedTopic.title}
-                    onChange={(event) => setTopicTitleDrafts((current) => ({ ...current, [selectedTopic.id]: event.target.value }))}
-                  />
-                  <div className="role-editor-heading">
-                    <strong>Кто может писать</strong>
-                    <span>Если ничего не выбрано, писать могут все</span>
-                  </div>
-                  <div className="role-options">
-                    {roles.map((role) => {
-                      const checked = (topicRoleDrafts[selectedTopic.id] ?? []).includes(role.code);
-                      return (
-                        <label className={checked ? "selected" : ""} key={role.code}>
-                          <input type="checkbox" checked={checked} onChange={() => toggleTopicRole(selectedTopic.id, role.code)} />
-                          <span className="check-box">{checked && <Check size={15} />}</span>
-                          <span>{role.title}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                  <button className="save-permissions" onClick={() => saveTopicPermissions(selectedTopic)}>
-                    <Save size={17} /> Сохранить права
-                  </button>
-                </>
-              ) : (
-                <div className="editor-empty"><Settings size={28} /><span>Выберите тему для настройки</span></div>
-              )}
-            </div>
-          </div>
-
-          <div className="manual-topic">
-            <div><strong>Добавить старую тему</strong><span>Для тем, которые бот еще не обнаружил</span></div>
-            <div className="manual-topic-form">
-              <input inputMode="numeric" placeholder="ID темы" value={newTopicId} onChange={(event) => setNewTopicId(event.target.value)} />
-              <input placeholder="Название темы" value={newTopicTitle} onChange={(event) => setNewTopicTitle(event.target.value)} />
-              <button className="icon-button" onClick={createTopic} title="Добавить тему" aria-label="Добавить тему"><Plus size={19} /></button>
-            </div>
+          <div className="audit-list">
+            {logs.map((entry) => (
+              <div className="audit-row" key={entry.id}>
+                <time>{formatLogDate(entry.created_at)}</time>
+                <div><strong>{auditActionLabels[entry.action] ?? entry.action}</strong><span>{entry.admin_telegram_id ? `Администратор ${entry.admin_telegram_id}` : "Бот / пользователь"} · {entry.entity_type}{entry.entity_id ? ` #${entry.entity_id}` : ""}</span></div>
+                <code>{Object.keys(entry.payload).length > 0 ? JSON.stringify(entry.payload) : "—"}</code>
+              </div>
+            ))}
+            {logs.length === 0 && <div className="empty">Событий пока нет.</div>}
           </div>
         </section>
       )}

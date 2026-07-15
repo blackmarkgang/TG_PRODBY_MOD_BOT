@@ -2,7 +2,7 @@ from aiogram.types import User as TelegramUser
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Application, ApplicationFile, User
+from app.db.models import Application, ApplicationFile, AuditLog, User
 
 
 class UserBannedError(ValueError):
@@ -40,6 +40,7 @@ async def create_pending_application(
     age: int,
     music_role: str | None,
     answers: dict,
+    answer_labels: dict,
     files: list[dict],
 ) -> Application:
     user = await get_or_create_user(session, tg_user)
@@ -51,11 +52,24 @@ async def create_pending_application(
         age=age,
         music_role=music_role,
         answers_json=answers,
+        answer_labels_json=answer_labels,
     )
     session.add(application)
     await session.flush()
     for file_data in files:
         session.add(ApplicationFile(application_id=application.id, **file_data))
+    session.add(
+        AuditLog(
+            action="application_submitted",
+            entity_type="application",
+            entity_id=application.id,
+            payload_json={
+                "user_id": user.id,
+                "telegram_id": user.telegram_id,
+                "username": user.username,
+            },
+        )
+    )
     await session.commit()
     await session.refresh(application)
     return application
