@@ -783,7 +783,7 @@ textarea {
 
 .settings-menu {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   border-bottom: 1px solid #2a2a2a;
   padding-bottom: 18px;
@@ -908,6 +908,62 @@ textarea {
   min-width: 0;
   display: grid;
   gap: 7px;
+}
+
+.staff-create {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(170px, 0.45fr) auto;
+  gap: 8px;
+}
+
+.staff-create button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.staff-list {
+  border-top: 1px solid #2a2a2a;
+}
+
+.staff-row {
+  min-height: 72px;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(160px, 0.55fr) minmax(170px, 0.45fr) auto;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid #2a2a2a;
+  padding: 10px 2px;
+}
+
+.staff-identity {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.staff-identity strong,
+.staff-identity span {
+  overflow-wrap: anywhere;
+}
+
+.staff-identity span,
+.protected-access {
+  color: #888888;
+  font-size: 13px;
+}
+
+.staff-row code {
+  color: #777777;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.access-role {
+  color: #63ff66;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .bot-status-bar {
@@ -1069,6 +1125,8 @@ textarea {
   .question-create,
   .config-row,
   .question-row,
+  .staff-create,
+  .staff-row,
   .audit-row {
     grid-template-columns: 1fr;
   }

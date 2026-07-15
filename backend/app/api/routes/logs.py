@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_admin
+from app.api.deps import get_current_full_admin
 from app.core.config import settings
 from app.db.models import AdminUser, AuditLog, User
 from app.db.session import get_session
@@ -14,7 +14,7 @@ router = APIRouter()
 @router.get("")
 async def list_logs(
     limit: int = Query(default=200, ge=1, le=500),
-    _: AdminUser = Depends(get_current_admin),
+    _: AdminUser = Depends(get_current_full_admin),
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     result = await session.execute(
@@ -107,7 +107,7 @@ def serialize_actor(
 
 
 @router.get("/status")
-async def bot_status(_: AdminUser = Depends(get_current_admin)) -> dict:
+async def bot_status(_: AdminUser = Depends(get_current_full_admin)) -> dict:
     bot = Bot(settings.bot_token)
     try:
         me = await bot.get_me()

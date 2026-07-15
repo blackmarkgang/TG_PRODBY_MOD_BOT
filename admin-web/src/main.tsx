@@ -21,6 +21,7 @@ import {
   ShieldBan,
   SlidersHorizontal,
   Trash2,
+  UserCog,
   Users,
 } from "lucide-react";
 import "./styles.css";
@@ -123,8 +124,19 @@ type BotStatus = {
   mode: string;
 };
 
+type StaffRole = "owner" | "admin" | "moderator";
+
+type StaffUser = {
+  id: number;
+  telegram_id: number;
+  role: StaffRole;
+  username: string | null;
+  first_name: string | null;
+  last_name: string | null;
+};
+
 type Tab = "applications" | "participants" | "settings" | "logs";
-type SettingsSection = "topics" | "roles" | "questions";
+type SettingsSection = "topics" | "roles" | "questions" | "access";
 type PreviewKind = "audio" | "video" | "image" | "pdf" | null;
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
@@ -181,6 +193,16 @@ const auditActionLabels: Record<string, string> = {
   reorder_questions: "Порядок вопросов изменен",
   moderation_denied: "Сообщение удалено модерацией",
   resend_notification: "Уведомление отправлено повторно",
+  grant_staff_access: "Выдан доступ к панели",
+  restore_staff_access: "Восстановлен доступ к панели",
+  update_staff_access: "Изменены права сотрудника",
+  revoke_staff_access: "Отозван доступ к панели",
+};
+
+const staffRoleLabels: Record<StaffRole, string> = {
+  owner: "Владелец",
+  admin: "Администратор",
+  moderator: "Модератор",
 };
 
 function authHeaders(initData: string): Record<string, string> {
@@ -255,6 +277,11 @@ function App() {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [logs, setLogs] = useState<AuditEntry[]>([]);
   const [botStatus, setBotStatus] = useState<BotStatus | null>(null);
+  const [currentAdmin, setCurrentAdmin] = useState<StaffUser | null>(null);
+  const [staff, setStaff] = useState<StaffUser[]>([]);
+  const [staffRoleDrafts, setStaffRoleDrafts] = useState<Record<number, "admin" | "moderator">>({});
+  const [newStaffTelegramId, setNewStaffTelegramId] = useState("");
+  const [newStaffRole, setNewStaffRole] = useState<"admin" | "moderator">("moderator");
   const [roleTitleDrafts, setRoleTitleDrafts] = useState<Record<number, string>>({});
   const [questionDrafts, setQuestionDrafts] = useState<Record<number, Question>>({});
   const [newRoleTitle, setNewRoleTitle] = useState("");
@@ -301,65 +328,87 @@ function App() {
   async function loadAll() {
     setError(null);
     const headers = authHeaders(initData);
-    const [
-      applicationsResponse,
-      participantsResponse,
-      rolesResponse,
-      topicsResponse,
-      questionsResponse,
-      logsResponse,
-      botStatusResponse,
-    ] = await Promise.all([
-      fetch(`${apiBaseUrl}/applications`, { headers }),
-      fetch(`${apiBaseUrl}/participants`, { headers }),
-      fetch(`${apiBaseUrl}/settings/roles`, { headers }),
-      fetch(`${apiBaseUrl}/settings/topics`, { headers }),
-      fetch(`${apiBaseUrl}/settings/questions`, { headers }),
-      fetch(`${apiBaseUrl}/logs`, { headers }),
-      fetch(`${apiBaseUrl}/logs/status`, { headers }),
-    ]);
+    try {
+      const meResponse = await fetch(`${apiBaseUrl}/access/me`, { headers });
+      if (!meResponse.ok) {
+        setCurrentAdmin(null);
+        setError(`Доступ к панели запрещен: ${await getApiError(meResponse)}`);
+        return;
+      }
+      const loadedAdmin: StaffUser = await meResponse.json();
+      const fullAccess = loadedAdmin.role === "owner" || loadedAdmin.role === "admin";
+      setCurrentAdmin(loadedAdmin);
 
-    const failedResponse = [
-      applicationsResponse,
-      participantsResponse,
-      rolesResponse,
-      topicsResponse,
-      questionsResponse,
-      logsResponse,
-      botStatusResponse,
-    ].find((response) => !response.ok);
-    if (failedResponse) {
-      setError(`Не удалось загрузить данные: ${await getApiError(failedResponse)}`);
-      return;
+      const baseResponses = await Promise.all([
+        fetch(`${apiBaseUrl}/applications`, { headers }),
+        fetch(`${apiBaseUrl}/participants`, { headers }),
+        fetch(`${apiBaseUrl}/settings/roles`, { headers }),
+      ]);
+      const failedBaseResponse = baseResponses.find((response) => !response.ok);
+      if (failedBaseResponse) {
+        setError(`Не удалось загрузить данные: ${await getApiError(failedBaseResponse)}`);
+        return;
+      }
+
+      const loadedApplications: Application[] = await baseResponses[0].json();
+      const loadedParticipants: Participant[] = await baseResponses[1].json();
+      const loadedRoles: Role[] = await baseResponses[2].json();
+      setApplications(loadedApplications);
+      setParticipants(loadedParticipants);
+      setRoles(loadedRoles);
+      setRoleTitleDrafts(Object.fromEntries(
+        loadedRoles.filter((role) => role.id !== undefined).map((role) => [role.id!, role.title]),
+      ));
+      setApplicationRoles(Object.fromEntries(
+        loadedApplications.map((application) => [application.id, application.roles.map((role) => role.code)]),
+      ));
+      setParticipantRoleDrafts(Object.fromEntries(
+        loadedParticipants.map((participant) => [participant.id, participant.roles.map((role) => role.code)]),
+      ));
+
+      if (!fullAccess) {
+        setActiveTab((current) => current === "settings" || current === "logs" ? "applications" : current);
+        setTopics([]);
+        setQuestions([]);
+        setLogs([]);
+        setBotStatus(null);
+        setStaff([]);
+        return;
+      }
+
+      const fullResponses = await Promise.all([
+        fetch(`${apiBaseUrl}/settings/topics`, { headers }),
+        fetch(`${apiBaseUrl}/settings/questions`, { headers }),
+        fetch(`${apiBaseUrl}/logs`, { headers }),
+        fetch(`${apiBaseUrl}/logs/status`, { headers }),
+        fetch(`${apiBaseUrl}/access/admins`, { headers }),
+      ]);
+      const failedFullResponse = fullResponses.find((response) => !response.ok);
+      if (failedFullResponse) {
+        setError(`Не удалось загрузить данные: ${await getApiError(failedFullResponse)}`);
+        return;
+      }
+
+      const loadedTopics: Topic[] = await fullResponses[0].json();
+      const loadedQuestions: Question[] = await fullResponses[1].json();
+      const loadedStaff: StaffUser[] = await fullResponses[4].json();
+      setTopics(loadedTopics);
+      setQuestions(loadedQuestions);
+      setLogs(await fullResponses[2].json());
+      setBotStatus(await fullResponses[3].json());
+      setStaff(loadedStaff);
+      setQuestionDrafts(Object.fromEntries(loadedQuestions.map((question) => [question.id, question])));
+      setStaffRoleDrafts(Object.fromEntries(
+        loadedStaff
+          .filter((item) => item.role !== "owner")
+          .map((item) => [item.id, item.role as "admin" | "moderator"]),
+      ));
+      setTopicRoleDrafts(Object.fromEntries(loadedTopics.map((topic) => [topic.id, topic.allowed_roles.map((role) => role.code)])));
+      setTopicTitleDrafts(Object.fromEntries(loadedTopics.map((topic) => [topic.id, topic.title])));
+      setSelectedTopicId((current) => current ?? loadedTopics[0]?.id ?? null);
+    } catch {
+      setError("Не удалось подключиться к API панели.");
     }
-
-    const loadedApplications: Application[] = await applicationsResponse.json();
-    const loadedParticipants: Participant[] = await participantsResponse.json();
-    const loadedRoles: Role[] = await rolesResponse.json();
-    const loadedQuestions: Question[] = await questionsResponse.json();
-    setApplications(loadedApplications);
-    setParticipants(loadedParticipants);
-    setRoles(loadedRoles);
-    setQuestions(loadedQuestions);
-    setLogs(await logsResponse.json());
-    setBotStatus(await botStatusResponse.json());
-    setRoleTitleDrafts(Object.fromEntries(
-      loadedRoles.filter((role) => role.id !== undefined).map((role) => [role.id!, role.title]),
-    ));
-    setQuestionDrafts(Object.fromEntries(
-      loadedQuestions.map((question) => [question.id, question]),
-    ));
-    setApplicationRoles(Object.fromEntries(
-      loadedApplications.map((application) => [application.id, application.roles.map((role) => role.code)]),
-    ));
-    setParticipantRoleDrafts(Object.fromEntries(
-      loadedParticipants.map((participant) => [participant.id, participant.roles.map((role) => role.code)]),
-    ));
-    const loadedTopics: Topic[] = await topicsResponse.json();
-    setTopics(loadedTopics);
-    setTopicRoleDrafts(Object.fromEntries(loadedTopics.map((topic) => [topic.id, topic.allowed_roles.map((role) => role.code)])));
-    setTopicTitleDrafts(Object.fromEntries(loadedTopics.map((topic) => [topic.id, topic.title])));
-    setSelectedTopicId((current) => current ?? loadedTopics[0]?.id ?? null);
   }
 
   async function review(id: number, action: "approve" | "reject") {
@@ -681,6 +730,61 @@ function App() {
     await loadAll();
   }
 
+  async function addStaffMember() {
+    const telegramId = Number(newStaffTelegramId);
+    if (!Number.isSafeInteger(telegramId) || telegramId <= 0) {
+      setError("Укажите корректный Telegram ID.");
+      return;
+    }
+    setError(null);
+    const response = await fetch(`${apiBaseUrl}/access/admins`, {
+      method: "POST",
+      headers: { ...authHeaders(initData), "Content-Type": "application/json" },
+      body: JSON.stringify({ telegram_id: telegramId, role: newStaffRole }),
+    });
+    if (!response.ok) {
+      setError(`Не удалось выдать доступ: ${await getApiError(response)}`);
+      return;
+    }
+    setNewStaffTelegramId("");
+    setNewStaffRole("moderator");
+    setFeedback("Доступ к панели выдан.");
+    await loadAll();
+  }
+
+  async function saveStaffRole(staffMember: StaffUser) {
+    const role = staffRoleDrafts[staffMember.id];
+    if (!role) return;
+    setError(null);
+    const response = await fetch(`${apiBaseUrl}/access/admins/${staffMember.id}`, {
+      method: "PATCH",
+      headers: { ...authHeaders(initData), "Content-Type": "application/json" },
+      body: JSON.stringify({ role }),
+    });
+    if (!response.ok) {
+      setError(`Не удалось изменить доступ: ${await getApiError(response)}`);
+      return;
+    }
+    setFeedback("Уровень доступа обновлен.");
+    await loadAll();
+  }
+
+  async function revokeStaffAccess(staffMember: StaffUser) {
+    const identity = staffMember.username ? `@${staffMember.username}` : `ID ${staffMember.telegram_id}`;
+    if (!window.confirm(`Отозвать доступ к панели у ${identity}?`)) return;
+    setError(null);
+    const response = await fetch(`${apiBaseUrl}/access/admins/${staffMember.id}`, {
+      method: "DELETE",
+      headers: authHeaders(initData),
+    });
+    if (!response.ok) {
+      setError(`Не удалось отозвать доступ: ${await getApiError(response)}`);
+      return;
+    }
+    setFeedback("Доступ к панели отозван.");
+    await loadAll();
+  }
+
   async function fetchFile(applicationId: number, file: ApplicationFile): Promise<Blob | null> {
     const response = await fetch(
       `${apiBaseUrl}/applications/${applicationId}/files/${file.id}/download`,
@@ -725,13 +829,14 @@ function App() {
   }
 
   const selectedTopic = topics.find((topic) => topic.id === selectedTopicId) ?? null;
+  const hasFullAccess = currentAdmin?.role === "owner" || currentAdmin?.role === "admin";
 
   return (
     <main className="shell">
       <header className="app-header">
         <div className="brand-block">
           <h1>PROD<b className="brand-dot">.</b>BY</h1>
-          <span>Панель управления</span>
+          <span>{currentAdmin ? staffRoleLabels[currentAdmin.role] : "Панель управления"}</span>
         </div>
         <button className="icon-button" onClick={loadAll} title="Обновить данные" aria-label="Обновить данные">
           <RefreshCw size={19} />
@@ -745,12 +850,12 @@ function App() {
         <button className={activeTab === "participants" ? "active" : ""} onClick={() => setActiveTab("participants")}>
           <Users size={18} /> Участники
         </button>
-        <button className={activeTab === "settings" ? "active" : ""} onClick={() => setActiveTab("settings")}>
+        {hasFullAccess && <button className={activeTab === "settings" ? "active" : ""} onClick={() => setActiveTab("settings")}>
           <Settings size={18} /> Настройки
-        </button>
-        <button className={activeTab === "logs" ? "active" : ""} onClick={() => setActiveTab("logs")}>
+        </button>}
+        {hasFullAccess && <button className={activeTab === "logs" ? "active" : ""} onClick={() => setActiveTab("logs")}>
           <Activity size={18} /> Логи
-        </button>
+        </button>}
       </nav>
 
       {error && <div className="message error">{error}</div>}
@@ -925,7 +1030,7 @@ function App() {
         </section>
       )}
 
-      {activeTab === "settings" && (
+      {activeTab === "settings" && hasFullAccess && (
         <section className="section-content">
           <nav className="settings-menu" aria-label="Разделы настроек">
             <button className={settingsSection === "topics" ? "active" : ""} onClick={() => setSettingsSection("topics")}>
@@ -936,6 +1041,9 @@ function App() {
             </button>
             <button className={settingsSection === "questions" ? "active" : ""} onClick={() => setSettingsSection("questions")}>
               <ListChecks size={18} /><span><strong>Анкета</strong><small>Вопросы и порядок</small></span>
+            </button>
+            <button className={settingsSection === "access" ? "active" : ""} onClick={() => setSettingsSection("access")}>
+              <UserCog size={18} /><span><strong>Доступ</strong><small>Администраторы и модераторы</small></span>
             </button>
           </nav>
 
@@ -1035,10 +1143,67 @@ function App() {
               </div>
             </>
           )}
+
+          {settingsSection === "access" && (
+            <>
+              <div className="section-heading">
+                <div><h2>Доступ к панели</h2><p>Администраторы видят все разделы, модераторы — заявки и участников</p></div>
+                <span className="count">{staff.length}</span>
+              </div>
+              <div className="staff-create">
+                <input
+                  inputMode="numeric"
+                  placeholder="Telegram ID"
+                  value={newStaffTelegramId}
+                  onChange={(event) => setNewStaffTelegramId(event.target.value)}
+                />
+                <select value={newStaffRole} onChange={(event) => setNewStaffRole(event.target.value as "admin" | "moderator")}>
+                  <option value="moderator">Модератор</option>
+                  <option value="admin">Администратор</option>
+                </select>
+                <button onClick={addStaffMember}><Plus size={17} /> Выдать доступ</button>
+              </div>
+              <div className="staff-list">
+                {staff.map((staffMember) => {
+                  const isProtected = staffMember.role === "owner" || staffMember.id === currentAdmin?.id;
+                  const name = [staffMember.first_name, staffMember.last_name].filter(Boolean).join(" ") || "Имя не сохранено";
+                  return (
+                    <div className="staff-row" key={staffMember.id}>
+                      <div className="staff-identity">
+                        <strong>{name}</strong>
+                        <span>{staffMember.username ? `@${staffMember.username}` : "Без username"}</span>
+                      </div>
+                      <code>ID {staffMember.telegram_id}</code>
+                      {staffMember.role === "owner" ? (
+                        <span className="access-role">Владелец</span>
+                      ) : (
+                        <select
+                          value={staffRoleDrafts[staffMember.id] ?? staffMember.role}
+                          disabled={isProtected}
+                          onChange={(event) => setStaffRoleDrafts((current) => ({
+                            ...current,
+                            [staffMember.id]: event.target.value as "admin" | "moderator",
+                          }))}
+                        >
+                          <option value="moderator">Модератор</option>
+                          <option value="admin">Администратор</option>
+                        </select>
+                      )}
+                      <div className="config-actions">
+                        {!isProtected && <button className="icon-button" onClick={() => saveStaffRole(staffMember)} title="Сохранить уровень доступа"><Save size={17} /></button>}
+                        {!isProtected && <button className="icon-button danger-icon" onClick={() => revokeStaffAccess(staffMember)} title="Отозвать доступ"><Trash2 size={17} /></button>}
+                        {isProtected && <span className="protected-access">Защищено</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </section>
       )}
 
-      {activeTab === "logs" && (
+      {activeTab === "logs" && hasFullAccess && (
         <section className="section-content">
           <div className="section-heading"><div><h2>Логи</h2><p>События бота, пользователей и администрации</p></div><span className="count">{logs.length}</span></div>
           <div className="bot-status-bar">

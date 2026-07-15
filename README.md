@@ -47,6 +47,14 @@ Backend runs as two processes:
 
 The project stores no secrets in Git. Use `.env`.
 
+## Admin panel access
+
+- `owner` and `admin` can use applications, participants, settings, logs, and staff access management.
+- `moderator` can use only applications and participants, including application decisions and community role assignment.
+- Users without an active `admin_users` record receive HTTP 403 from protected API routes.
+- Full administrators can add, change, or revoke staff access under Settings > Access.
+- Production deployments must set `APP_ENV=production`; the development ID header is accepted only in local mode.
+
 ## Backups and storage
 
 - Telegram attachments are not copied to the server. PostgreSQL stores their Telegram `file_id` and metadata.

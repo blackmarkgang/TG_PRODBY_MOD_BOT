@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_admin
+from app.api.deps import get_current_full_admin
 from app.core.config import settings
 from app.db.models import AdminUser, AuditLog, CommunityRole, ForumTopic, TopicRolePermission
 from app.db.session import get_session
@@ -62,7 +62,7 @@ async def serialize_topics(session: AsyncSession) -> list[dict]:
 
 @router.get("/topics")
 async def list_topics(
-    _: AdminUser = Depends(get_current_admin),
+    _: AdminUser = Depends(get_current_full_admin),
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     return await serialize_topics(session)
@@ -71,7 +71,7 @@ async def list_topics(
 @router.post("/topics", status_code=201)
 async def create_topic(
     payload: TopicCreatePayload,
-    admin: AdminUser = Depends(get_current_admin),
+    admin: AdminUser = Depends(get_current_full_admin),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     if not settings.telegram_group_id:
@@ -117,7 +117,7 @@ async def create_topic(
 async def update_topic(
     topic_id: int,
     payload: TopicUpdatePayload,
-    admin: AdminUser = Depends(get_current_admin),
+    admin: AdminUser = Depends(get_current_full_admin),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     topic = await session.get(ForumTopic, topic_id)
@@ -142,7 +142,7 @@ async def update_topic(
 async def update_topic_roles(
     topic_id: int,
     payload: TopicRolesPayload,
-    admin: AdminUser = Depends(get_current_admin),
+    admin: AdminUser = Depends(get_current_full_admin),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     topic = await session.get(ForumTopic, topic_id)

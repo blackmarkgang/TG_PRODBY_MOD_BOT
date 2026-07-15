@@ -131,9 +131,6 @@ async def moderate_forum_topic(message: Message) -> None:
             or message.forum_topic_reopened
         ):
             return
-        if message.from_user.id in settings.admin_ids:
-            return
-
         admin_result = await session.execute(
             select(AdminUser.id).where(
                 AdminUser.telegram_id == message.from_user.id,

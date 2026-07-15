@@ -2,9 +2,11 @@ from aiogram import Router
 from aiogram.filters import CommandStart
 from aiogram.types import Message, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from sqlalchemy import select
 
 from app.bot.keyboards import start_keyboard
 from app.core.config import settings
+from app.db.models import AdminUser
 from app.db.session import SessionLocal
 from app.services.application_service import is_user_banned
 from app.services.community_access import (
@@ -60,10 +62,18 @@ async def start(message: Message) -> None:
 
 @router.message(lambda message: message.text == "/admin")
 async def admin_panel(message: Message) -> None:
-    if message.from_user and message.from_user.id in settings.admin_ids:
-        builder = InlineKeyboardBuilder()
-        builder.button(text="Открыть панель", web_app=WebAppInfo(url=settings.public_webapp_url))
-        await message.answer("⚙️ <b>Панель администратора</b>", parse_mode="HTML", reply_markup=builder.as_markup())
-        return
+    if message.from_user:
+        async with SessionLocal() as session:
+            result = await session.execute(
+                select(AdminUser.id).where(
+                    AdminUser.telegram_id == message.from_user.id,
+                    AdminUser.is_active.is_(True),
+                )
+            )
+            if result.scalar_one_or_none() is not None:
+                builder = InlineKeyboardBuilder()
+                builder.button(text="Открыть панель", web_app=WebAppInfo(url=settings.public_webapp_url))
+                await message.answer("⚙️ <b>Панель управления</b>", parse_mode="HTML", reply_markup=builder.as_markup())
+                return
 
     await message.answer("⛔ <b>Доступ запрещен</b>", parse_mode="HTML")

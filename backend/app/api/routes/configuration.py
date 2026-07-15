@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_admin
+from app.api.deps import get_current_admin, get_current_full_admin
 from app.db.models import (
     AdminUser,
     ApplicationQuestion,
@@ -73,7 +73,7 @@ async def list_roles(
 @router.post("/roles", status_code=201)
 async def create_role(
     payload: RolePayload,
-    admin: AdminUser = Depends(get_current_admin),
+    admin: AdminUser = Depends(get_current_full_admin),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     role = CommunityRole(code=f"custom_{uuid4().hex[:10]}", title=payload.title)
@@ -96,7 +96,7 @@ async def create_role(
 async def update_role(
     role_id: int,
     payload: RolePayload,
-    admin: AdminUser = Depends(get_current_admin),
+    admin: AdminUser = Depends(get_current_full_admin),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     role = await session.get(CommunityRole, role_id)
@@ -119,7 +119,7 @@ async def update_role(
 @router.delete("/roles/{role_id}", status_code=204)
 async def delete_role(
     role_id: int,
-    admin: AdminUser = Depends(get_current_admin),
+    admin: AdminUser = Depends(get_current_full_admin),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     role = await session.get(CommunityRole, role_id)
@@ -149,7 +149,7 @@ async def delete_role(
 
 @router.get("/questions")
 async def list_questions(
-    _: AdminUser = Depends(get_current_admin),
+    _: AdminUser = Depends(get_current_full_admin),
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     result = await session.execute(
@@ -161,7 +161,7 @@ async def list_questions(
 @router.post("/questions", status_code=201)
 async def create_question(
     payload: QuestionPayload,
-    admin: AdminUser = Depends(get_current_admin),
+    admin: AdminUser = Depends(get_current_full_admin),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     max_order = await session.scalar(select(func.max(ApplicationQuestion.sort_order))) or 0
@@ -191,7 +191,7 @@ async def create_question(
 async def update_question(
     question_id: int,
     payload: QuestionPayload,
-    admin: AdminUser = Depends(get_current_admin),
+    admin: AdminUser = Depends(get_current_full_admin),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     question = await session.get(ApplicationQuestion, question_id)
@@ -216,7 +216,7 @@ async def update_question(
 @router.put("/questions/order")
 async def update_question_order(
     payload: QuestionOrderPayload,
-    admin: AdminUser = Depends(get_current_admin),
+    admin: AdminUser = Depends(get_current_full_admin),
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     result = await session.execute(select(ApplicationQuestion))
@@ -241,7 +241,7 @@ async def update_question_order(
 @router.delete("/questions/{question_id}", status_code=204)
 async def delete_question(
     question_id: int,
-    admin: AdminUser = Depends(get_current_admin),
+    admin: AdminUser = Depends(get_current_full_admin),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     question = await session.get(ApplicationQuestion, question_id)
