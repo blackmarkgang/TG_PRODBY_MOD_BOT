@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     bot_token: str = "replace_me"
     telegram_group_id: str | None = None
     database_url: str = "postgresql+asyncpg://prodby:prodby@localhost:5432/prodby"
-    sync_database_url: str = "postgresql://prodby:prodby@localhost:5432/prodby"
+    sync_database_url: str = "postgresql+psycopg://prodby:prodby@localhost:5432/prodby"
     admin_ids_raw: str = Field(default="", alias="ADMIN_IDS")
     cors_origins_raw: str = Field(default="http://localhost:5173", alias="CORS_ORIGINS")
     public_webapp_url: str = "http://localhost:5173"
@@ -28,4 +28,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
