@@ -1,4 +1,9 @@
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+)
 
 ROLE_LABELS = [
     "Артист",
@@ -11,10 +16,11 @@ ROLE_LABELS = [
 ]
 
 
-def start_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Подать заявку")]],
-        resize_keyboard=True,
+def start_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Подать заявку", callback_data="start_application")]
+        ]
     )
 
 

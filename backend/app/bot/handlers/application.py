@@ -2,7 +2,7 @@ import re
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, ReplyKeyboardRemove
+from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
 from app.bot.keyboards import ROLE_LABELS, portfolio_keyboard, roles_keyboard
 from app.bot.states import ApplicationForm
@@ -18,6 +18,17 @@ MAX_ATTACHMENTS = 10
 
 @router.message(F.text == "Подать заявку")
 async def start_application(message: Message, state: FSMContext) -> None:
+    await begin_application(message, state)
+
+
+@router.callback_query(F.data == "start_application")
+async def start_application_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    if isinstance(callback.message, Message):
+        await begin_application(callback.message, state)
+
+
+async def begin_application(message: Message, state: FSMContext) -> None:
     await state.clear()
     await state.update_data(files=[])
     await state.set_state(ApplicationForm.age)

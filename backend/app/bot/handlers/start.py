@@ -1,6 +1,6 @@
 from aiogram import Router
 from aiogram.filters import CommandStart
-from aiogram.types import Message, WebAppInfo
+from aiogram.types import Message, ReplyKeyboardRemove, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.bot.keyboards import start_keyboard
@@ -8,13 +8,25 @@ from app.core.config import settings
 
 router = Router()
 
+WELCOME_TEXT = """<b>Добро пожаловать в Prod.by!</b>
+
+Это закрытое сообщество, объединяющее специалистов музыкальной индустрии и смежных творческих направлений.
+
+Здесь мы собираем не только артистов, продюсеров, битмейкеров и звукорежиссеров, но и дизайнеров, операторов, монтажеров, организаторов и всех, кто участвует в создании и продвижении музыкальных проектов.
+
+Для вступления необходимо пройти небольшую анкету. После проверки администрацией вы получите уведомление о результате рассмотрения заявки.
+
+Нажмите <b>«Подать заявку»</b>, чтобы начать."""
+
 
 @router.message(CommandStart())
 async def start(message: Message) -> None:
-    await message.answer(
-        "Добро пожаловать в Prod.by. Здесь можно подать заявку на вступление в сообщество.",
-        reply_markup=start_keyboard(),
+    welcome = await message.answer(
+        WELCOME_TEXT,
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardRemove(),
     )
+    await welcome.edit_reply_markup(reply_markup=start_keyboard())
 
 
 @router.message(lambda message: message.text == "/admin")
