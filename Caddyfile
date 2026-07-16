@@ -1,0 +1,17 @@
+{$APP_DOMAIN} {
+    encode zstd gzip
+
+    handle_path /api/* {
+        reverse_proxy api:8000
+    }
+
+    handle {
+        reverse_proxy admin-web:80
+    }
+
+    header {
+        -Server
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+    }
+}

@@ -1,0 +1,123 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    logging: *default-logging
+
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.production
+    command: alembic upgrade head
+    env_file:
+      - ${ENV_FILE:-.env.production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *default-logging
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.production
+    command: uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --workers 1
+    restart: unless-stopped
+    env_file:
+      - ${ENV_FILE:-.env.production}
+    expose:
+      - "8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+
+  bot:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.production
+    command: python -m app.bot.main
+    restart: unless-stopped
+    env_file:
+      - ${ENV_FILE:-.env.production}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    logging: *default-logging
+
+  admin-web:
+    build:
+      context: ./admin-web
+      dockerfile: Dockerfile.production
+      args:
+        VITE_API_BASE_URL: /api
+    restart: unless-stopped
+    expose:
+      - "80"
+    depends_on:
+      api:
+        condition: service_healthy
+    logging: *default-logging
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      admin-web:
+        condition: service_started
+    logging: *default-logging
+
+  backup:
+    image: postgres:16-alpine
+    command: ["sh", "/opt/backup/backup.sh"]
+    restart: unless-stopped
+    environment:
+      PGHOST: postgres
+      PGDATABASE: ${POSTGRES_DB}
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+    volumes:
+      - ./backups:/backups
+      - ./ops/backup.sh:/opt/backup/backup.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *default-logging
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

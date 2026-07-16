@@ -1,77 +1,52 @@
 # Prod.by Bot
 
-MVP for Telegram community applications, admin Mini App, roles, protected forum topics, and per-topic whitelists.
+Telegram-бот закрытого музыкального сообщества с анкетами, вложениями, ролями, модерацией форумных тем и административной Mini App.
 
-## Stack
+## Возможности
 
-- Python 3.11+
-- aiogram 3
-- FastAPI
-- PostgreSQL
-- SQLAlchemy 2 + Alembic
-- React + Vite + TypeScript
-- Docker Compose
+- заявки на вступление через личные сообщения бота;
+- настраиваемые вопросы анкеты и вложения до 10 МБ;
+- одобрение, отклонение и блокировка кандидатов;
+- несколько ролей у участника;
+- ограничения публикации в темах по ролям;
+- уровни доступа `owner`, `admin` и `moderator`;
+- журнал действий и просмотр медиа в панели;
+- ежедневные резервные копии PostgreSQL и ротация Docker-логов.
 
-## Local setup
+## Стек
 
-1. Copy `.env.example` to `.env`.
-2. Put the BotFather token into `BOT_TOKEN`.
-3. Keep `ADMIN_IDS` as the initial owner/admin Telegram IDs.
-4. Set `MODERATION_TIMEOUT_SECONDS` to the group-wide timeout for posting in a restricted topic without a matching role (minimum 31 seconds, default 60).
-5. Start services:
+- Python 3.11, aiogram 3, FastAPI;
+- PostgreSQL 16, SQLAlchemy 2, Alembic;
+- React 19, Vite, TypeScript;
+- Docker Compose, Nginx, Caddy.
 
-```powershell
-docker compose up --build
-```
+## Документация
 
-API:
+- [Локальный запуск](docs/LOCAL_SETUP.md)
+- [Развертывание на Ubuntu VPS](docs/VPS_DEPLOY.md)
+- [Резервные копии и восстановление](docs/BACKUP_RESTORE.md)
 
-```text
-http://localhost:8000
-```
-
-Admin web:
-
-```text
-http://localhost:5173
-```
-
-For Telegram Mini App testing, expose the admin/API URL through an HTTPS tunnel such as ngrok or Cloudflare Tunnel, then put that URL into BotFather / menu button settings.
-
-## Development
-
-Backend runs as two processes:
-
-- `api`: FastAPI HTTP API for the admin panel.
-- `bot`: aiogram long-polling worker for Telegram.
-
-The project stores no secrets in Git. Use `.env`.
-
-## Admin panel access
-
-- `owner` and `admin` can use applications, participants, settings, logs, and staff access management.
-- `moderator` can use only applications and participants, including application decisions and community role assignment.
-- Users without an active `admin_users` record receive HTTP 403 from protected API routes.
-- Full administrators can add, change, or revoke staff access under Settings > Access.
-- Production deployments must set `APP_ENV=production`; the development ID header is accepted only in local mode.
-
-## Backups and storage
-
-- Telegram attachments are not copied to the server. PostgreSQL stores their Telegram `file_id` and metadata.
-- The `backup` container creates a validated PostgreSQL custom-format dump in `backups/` immediately after startup and then once per day.
-- Dumps older than `BACKUP_RETENTION_DAYS` are removed automatically (14 days by default).
-- Docker JSON logs are rotated at 10 MB with three files retained per container.
-
-Create an additional backup immediately:
+## Быстрый локальный запуск
 
 ```powershell
-docker compose run --rm backup sh /opt/backup/backup.sh --once
+Copy-Item .env.example .env
+# Заполните BOT_TOKEN, TELEGRAM_GROUP_ID и ADMIN_IDS в .env
+docker compose up -d --build
 ```
 
-Validate a dump without restoring it:
+- Панель: <http://localhost:5173>
+- API health check: <http://localhost:8000/health>
 
-```powershell
-docker compose exec backup pg_restore --list /backups/prodby_TIMESTAMP.dump
-```
+Секреты не хранятся в Git. Файлы `.env` и `.env.production` игнорируются.
 
-The local `backups/` directory is on the same machine as the application. For production, copy this directory to independent storage because a VPS disk failure would otherwise remove both the database and its backups.
+## Доступ к панели
+
+- `owner` и `admin`: полный доступ;
+- `moderator`: заявки и участники;
+- остальные пользователи: HTTP 403.
+
+В production обязательно используется `APP_ENV=production`. Локальный тестовый заголовок авторизации при этом отключен.
+
+## Хранение вложений
+
+Файлы заявок остаются в Telegram. В PostgreSQL сохраняются `file_id` и метаданные, поэтому вложения не занимают место на VPS. Бэкап PostgreSQL не содержит бинарные копии вложений.
