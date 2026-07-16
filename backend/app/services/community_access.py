@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.models import Application, User
+from app.services.bot_text_service import render_bot_text
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +48,7 @@ async def is_group_member(bot: Bot, telegram_id: int) -> bool:
     return member.status == ChatMemberStatus.RESTRICTED and member.is_member
 
 
-def active_application_message(application: Application) -> str:
+async def active_application_message(application: Application) -> str:
     if application.status == "pending":
-        return (
-            f"⏳ <b>Заявка №{application.id} уже на рассмотрении</b>\n\n"
-            "Повторно заполнять анкету не нужно. Мы пришлем решение в этот чат."
-        )
-    return (
-        f"✅ <b>Заявка №{application.id} уже одобрена</b>\n\n"
-        "Используйте ссылку из сообщения об одобрении. Если она перестала действовать, обратитесь к администрации."
-    )
+        return await render_bot_text("active_application_pending", application_id=application.id)
+    return await render_bot_text("active_application_approved", application_id=application.id)

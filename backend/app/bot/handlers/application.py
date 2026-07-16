@@ -24,25 +24,12 @@ from app.services.community_access import (
     get_active_application,
     is_group_member,
 )
+from app.services.bot_text_service import render_bot_text
 
 router = Router()
 
 URL_PATTERN = re.compile(r"https?://[^\s]+", re.IGNORECASE)
 MAX_ATTACHMENTS = 10
-
-
-def form_message(
-    emoji: str,
-    title: str,
-    body: str,
-    step: int | None = None,
-    total_steps: int | None = None,
-) -> str:
-    parts = [f"{emoji} <b>{title}</b>"]
-    if step is not None and total_steps is not None:
-        parts.append(f"<i>Шаг {step} из {total_steps}</i>")
-    parts.append(body)
-    return "\n\n".join(parts)
 
 
 async def answer_form(message: Message, text: str, **kwargs) -> None:
@@ -84,22 +71,14 @@ async def begin_application(message: Message, state: FSMContext, telegram_id: in
             if await is_user_banned(session, telegram_id):
                 await answer_form(
                     message,
-                    form_message(
-                        "⛔",
-                        "Доступ ограничен",
-                        "Вы не можете подать новую заявку в Prod.by.",
-                    ),
+                    await render_bot_text("access_banned"),
                     reply_markup=ReplyKeyboardRemove(),
                 )
                 return
             if await is_group_member(message.bot, telegram_id):
                 await answer_form(
                     message,
-                    form_message(
-                        "✅",
-                        "Вы уже состоите в Prod.by",
-                        "Повторная заявка не требуется — доступ к сообществу у вас уже есть.",
-                    ),
+                    await render_bot_text("already_member"),
                     reply_markup=ReplyKeyboardRemove(),
                 )
                 return
@@ -107,7 +86,7 @@ async def begin_application(message: Message, state: FSMContext, telegram_id: in
             if active_application is not None:
                 await answer_form(
                     message,
-                    active_application_message(active_application),
+                    await active_application_message(active_application),
                     reply_markup=ReplyKeyboardRemove(),
                 )
                 return
@@ -131,17 +110,21 @@ async def show_question(message: Message, state: FSMContext) -> None:
     questions = data["questions"]
     index = data["question_index"]
     question = questions[index]
-    body = escape(question.get("help_text") or "Отправьте ответ сообщением.")
+    body = (
+        escape(question["help_text"])
+        if question.get("help_text")
+        else await render_bot_text("question_default_help")
+    )
     if question["answer_type"] == "number":
-        body += "\n\n<i>Ответ должен быть числом.</i>"
+        body += f"\n\n{await render_bot_text('number_hint')}"
     await answer_form(
         message,
-        form_message(
-            "💬",
-            escape(question["text"]),
-            body,
+        await render_bot_text(
+            "question_prompt",
+            question=escape(question["text"]),
+            help_text=body,
             step=index + 1,
-            total_steps=len(questions) + 1,
+            total=len(questions) + 1,
         ),
         reply_markup=ReplyKeyboardRemove(),
     )
@@ -157,16 +140,16 @@ async def receive_question_answer(message: Message, state: FSMContext) -> None:
     if not answer:
         await answer_form(
             message,
-            form_message("⚠️", "Нужен текстовый ответ", "Отправьте ответ обычным сообщением."),
+            await render_bot_text("text_answer_required"),
         )
         return
     if question["answer_type"] == "number" and not answer.isdigit():
-        await answer_form(message, form_message("⚠️", "Нужно число", "Например: <b>24</b>."))
+        await answer_form(message, await render_bot_text("number_answer_required"))
         return
     if question["code"] == "age" and question["answer_type"] == "number" and not 1 <= int(answer) <= 120:
         await answer_form(
             message,
-            form_message("⚠️", "Проверьте возраст", "Допустимое значение: от 1 до 120."),
+            await render_bot_text("age_invalid"),
         )
         return
 
@@ -186,13 +169,11 @@ async def show_portfolio_step(message: Message, state: FSMContext) -> None:
     await state.set_state(ApplicationForm.portfolio)
     await answer_form(
         message,
-        form_message(
-            "📎",
-            "Добавьте примеры работ",
-            "Прикрепите до 10 файлов или ссылок. Размер одного файла — не более <b>10 МБ</b>. "
-            "Можно продолжить без вложений — нажмите <b>«Пропустить вложения»</b>.",
+        await render_bot_text(
+            "portfolio_prompt",
             step=len(questions) + 1,
-            total_steps=len(questions) + 1,
+            total=len(questions) + 1,
+            max_attachments=MAX_ATTACHMENTS,
         ),
         reply_markup=portfolio_keyboard(has_attachments=False),
     )
@@ -213,7 +194,7 @@ async def receive_portfolio_item(message: Message, state: FSMContext) -> None:
     if len(files) >= MAX_ATTACHMENTS:
         await answer_form(
             message,
-            form_message("📦", "Лимит достигнут", "Добавлено 10 вложений. Нажмите <b>«Готово»</b>."),
+            await render_bot_text("attachment_limit", max_attachments=MAX_ATTACHMENTS),
             reply_markup=portfolio_keyboard(has_attachments=True),
         )
         return
@@ -222,11 +203,7 @@ async def receive_portfolio_item(message: Message, state: FSMContext) -> None:
     if not items:
         await answer_form(
             message,
-            form_message(
-                "⚠️",
-                "Не удалось распознать вложение",
-                "Отправьте файл, аудио, видео, фото или ссылку. Для завершения нажмите <b>«Готово»</b>.",
-            ),
+            await render_bot_text("attachment_unrecognized"),
             reply_markup=portfolio_keyboard(has_attachments=bool(files)),
         )
         return
@@ -239,11 +216,7 @@ async def receive_portfolio_item(message: Message, state: FSMContext) -> None:
             except TelegramAPIError:
                 await answer_form(
                     message,
-                    form_message(
-                        "⚠️",
-                        "Не удалось проверить размер файла",
-                        "Попробуйте отправить файл еще раз или продолжите без него.",
-                    ),
+                    await render_bot_text("attachment_check_failed"),
                     reply_markup=portfolio_keyboard(has_attachments=bool(files)),
                 )
                 return
@@ -259,11 +232,7 @@ async def receive_portfolio_item(message: Message, state: FSMContext) -> None:
     if oversized_item is not None:
         await answer_form(
             message,
-            form_message(
-                "⚠️",
-                "Файл слишком большой",
-                "Размер одного файла не должен превышать <b>10 МБ</b>. Отправьте файл меньшего размера или продолжите без него.",
-            ),
+            await render_bot_text("attachment_too_large"),
             reply_markup=portfolio_keyboard(has_attachments=bool(files)),
         )
         return
@@ -273,10 +242,10 @@ async def receive_portfolio_item(message: Message, state: FSMContext) -> None:
     await state.update_data(files=files)
     await answer_form(
         message,
-        form_message(
-            "✅",
-            "Вложение добавлено",
-            f"Сейчас в заявке: <b>{len(files)} из {MAX_ATTACHMENTS}</b>. Можно отправить еще или нажать <b>«Готово»</b>.",
+        await render_bot_text(
+            "attachment_added",
+            count=len(files),
+            max_attachments=MAX_ATTACHMENTS,
         ),
         reply_markup=portfolio_keyboard(has_attachments=True),
     )
@@ -364,7 +333,7 @@ async def submit_application(message: Message, state: FSMContext) -> None:
     if message.from_user is None:
         await answer_form(
             message,
-            form_message("⚠️", "Не удалось определить пользователя", "Отправьте /start и попробуйте еще раз."),
+            await render_bot_text("user_unknown"),
         )
         return
 
@@ -383,18 +352,14 @@ async def submit_application(message: Message, state: FSMContext) -> None:
             await state.clear()
             await answer_form(
                 message,
-                form_message(
-                    "⛔",
-                    "Доступ ограничен",
-                    "Вы не можете отправить заявку в Prod.by.",
-                ),
+                await render_bot_text("submit_banned"),
                 reply_markup=ReplyKeyboardRemove(),
             )
             return
         except AttachmentTooLargeError:
             await answer_form(
                 message,
-                form_message("⚠️", "Файл слишком большой", "Удалите файл больше 10 МБ и попробуйте снова."),
+                await render_bot_text("submit_attachment_too_large"),
                 reply_markup=portfolio_keyboard(has_attachments=bool(data.get("files"))),
             )
             return
@@ -402,7 +367,7 @@ async def submit_application(message: Message, state: FSMContext) -> None:
             await state.clear()
             await answer_form(
                 message,
-                active_application_message(exc.application),
+                await active_application_message(exc.application),
                 reply_markup=ReplyKeyboardRemove(),
             )
             return
@@ -410,10 +375,6 @@ async def submit_application(message: Message, state: FSMContext) -> None:
     await state.clear()
     await answer_form(
         message,
-        form_message(
-            "🎉",
-            f"Заявка №{application.id} отправлена",
-            "Администрация рассмотрит ее и пришлет результат в этот чат.",
-        ),
+        await render_bot_text("application_submitted", application_id=application.id),
         reply_markup=ReplyKeyboardRemove(),
     )

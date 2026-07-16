@@ -14,19 +14,9 @@ from app.services.community_access import (
     get_active_application,
     is_group_member,
 )
+from app.services.bot_text_service import render_bot_text
 
 router = Router()
-
-WELCOME_TEXT = """<b>🎵 Добро пожаловать в Prod.by!</b>
-
-Это закрытое сообщество, объединяющее специалистов музыкальной индустрии и смежных творческих направлений.
-
-🎧 Здесь мы собираем не только артистов, продюсеров, битмейкеров и звукорежиссеров, но и дизайнеров, операторов, монтажеров, организаторов и всех, кто участвует в создании и продвижении музыкальных проектов.
-
-📝 Для вступления необходимо пройти небольшую анкету. После проверки администрацией вы получите уведомление о результате рассмотрения заявки.
-
-Нажмите <b>«Подать заявку»</b>, чтобы начать 👇"""
-
 
 @router.message(CommandStart())
 async def start(message: Message) -> None:
@@ -35,26 +25,26 @@ async def start(message: Message) -> None:
         async with SessionLocal() as session:
             if await is_user_banned(session, telegram_id):
                 await message.answer(
-                    "⛔ <b>Доступ ограничен</b>\n\nВы не можете подать новую заявку в Prod.by.",
+                    await render_bot_text("access_banned"),
                     parse_mode="HTML",
                 )
                 return
             if await is_group_member(message.bot, telegram_id):
                 await message.answer(
-                    "✅ <b>Вы уже состоите в Prod.by</b>\n\nПовторная заявка не требуется — доступ к сообществу у вас уже есть.",
+                    await render_bot_text("already_member"),
                     parse_mode="HTML",
                 )
                 return
             active_application = await get_active_application(session, telegram_id)
             if active_application is not None:
                 await message.answer(
-                    active_application_message(active_application),
+                    await active_application_message(active_application),
                     parse_mode="HTML",
                 )
                 return
 
     await message.answer(
-        WELCOME_TEXT,
+        await render_bot_text("welcome"),
         parse_mode="HTML",
         reply_markup=start_keyboard(),
     )
@@ -73,7 +63,7 @@ async def admin_panel(message: Message) -> None:
             if result.scalar_one_or_none() is not None:
                 builder = InlineKeyboardBuilder()
                 builder.button(text="Открыть панель", web_app=WebAppInfo(url=settings.public_webapp_url))
-                await message.answer("⚙️ <b>Панель управления</b>", parse_mode="HTML", reply_markup=builder.as_markup())
+                await message.answer(await render_bot_text("admin_panel"), parse_mode="HTML", reply_markup=builder.as_markup())
                 return
 
-    await message.answer("⛔ <b>Доступ запрещен</b>", parse_mode="HTML")
+    await message.answer(await render_bot_text("admin_access_denied"), parse_mode="HTML")

@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import (
     access,
     applications,
+    bot_settings,
     configuration,
     health,
     logs,
@@ -38,6 +39,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(access.router, prefix="/access", tags=["access"])
 app.include_router(applications.router, prefix="/applications", tags=["applications"])
+app.include_router(bot_settings.router, prefix="/bot-settings", tags=["bot-settings"])
 app.include_router(participants.router, prefix="/participants", tags=["participants"])
 app.include_router(settings_routes.router, prefix="/settings", tags=["settings"])
 app.include_router(configuration.router, prefix="/settings", tags=["settings"])

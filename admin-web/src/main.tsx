@@ -5,6 +5,8 @@ import {
   ArrowDown,
   ArrowUp,
   BadgeCheck,
+  Bot as BotIcon,
+  Camera,
   Check,
   Download,
   ExternalLink,
@@ -15,6 +17,7 @@ import {
   Plus,
   Play,
   RefreshCw,
+  RotateCcw,
   Save,
   Search,
   Settings,
@@ -124,6 +127,32 @@ type BotStatus = {
   mode: string;
 };
 
+type BotProfile = {
+  id: number;
+  username: string | null;
+  name: string;
+  short_description: string;
+  description: string;
+  avatar_id: string | null;
+};
+
+type BotTextSetting = {
+  key: string;
+  category: string;
+  title: string;
+  description: string;
+  text: string;
+  default_text: string;
+  variables: string[];
+  is_custom: boolean;
+  updated_at: string | null;
+};
+
+type BotSettingsResponse = {
+  profile: BotProfile;
+  messages: BotTextSetting[];
+};
+
 type StaffRole = "owner" | "admin" | "moderator";
 
 type StaffUser = {
@@ -135,7 +164,7 @@ type StaffUser = {
   last_name: string | null;
 };
 
-type Tab = "applications" | "participants" | "settings" | "logs";
+type Tab = "applications" | "participants" | "settings" | "bot" | "logs";
 type SettingsSection = "topics" | "roles" | "questions" | "access";
 type PreviewKind = "audio" | "video" | "image" | "pdf" | null;
 
@@ -197,6 +226,11 @@ const auditActionLabels: Record<string, string> = {
   restore_staff_access: "Восстановлен доступ к панели",
   update_staff_access: "Изменены права сотрудника",
   revoke_staff_access: "Отозван доступ к панели",
+  update_bot_profile: "Профиль бота изменен",
+  update_bot_avatar: "Аватар бота изменен",
+  remove_bot_avatar: "Аватар бота удален",
+  update_bot_text: "Текст бота изменен",
+  reset_bot_text: "Текст бота сброшен",
 };
 
 const staffRoleLabels: Record<StaffRole, string> = {
@@ -277,6 +311,11 @@ function App() {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [logs, setLogs] = useState<AuditEntry[]>([]);
   const [botStatus, setBotStatus] = useState<BotStatus | null>(null);
+  const [botProfile, setBotProfile] = useState<BotProfile | null>(null);
+  const [botProfileDraft, setBotProfileDraft] = useState<BotProfile | null>(null);
+  const [botMessages, setBotMessages] = useState<BotTextSetting[]>([]);
+  const [botMessageDrafts, setBotMessageDrafts] = useState<Record<string, string>>({});
+  const [botAvatarUrl, setBotAvatarUrl] = useState<string | null>(null);
   const [currentAdmin, setCurrentAdmin] = useState<StaffUser | null>(null);
   const [staff, setStaff] = useState<StaffUser[]>([]);
   const [staffRoleDrafts, setStaffRoleDrafts] = useState<Record<number, "admin" | "moderator">>({});
@@ -303,6 +342,8 @@ function App() {
   const [previewUrls, setPreviewUrls] = useState<Record<number, string>>({});
   const [loadingPreviews, setLoadingPreviews] = useState<Set<number>>(new Set());
   const previewUrlsRef = useRef<Record<number, string>>({});
+  const botAvatarUrlRef = useRef<string | null>(null);
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const initData = useMemo(() => window.Telegram?.WebApp?.initData ?? "", []);
   const filteredParticipants = useMemo(() => {
     const query = participantSearch.trim().toLocaleLowerCase("ru-RU").replace(/^@/, "");
@@ -322,6 +363,7 @@ function App() {
     void loadAll();
     return () => {
       Object.values(previewUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
+      if (botAvatarUrlRef.current) URL.revokeObjectURL(botAvatarUrlRef.current);
     };
   }, []);
 
@@ -367,12 +409,15 @@ function App() {
       ));
 
       if (!fullAccess) {
-        setActiveTab((current) => current === "settings" || current === "logs" ? "applications" : current);
+        setActiveTab((current) => current === "settings" || current === "bot" || current === "logs" ? "applications" : current);
         setTopics([]);
         setQuestions([]);
         setLogs([]);
         setBotStatus(null);
         setStaff([]);
+        setBotProfile(null);
+        setBotProfileDraft(null);
+        setBotMessages([]);
         return;
       }
 
@@ -382,8 +427,9 @@ function App() {
         fetch(`${apiBaseUrl}/logs`, { headers }),
         fetch(`${apiBaseUrl}/logs/status`, { headers }),
         fetch(`${apiBaseUrl}/access/admins`, { headers }),
+        fetch(`${apiBaseUrl}/bot-settings`, { headers }),
       ]);
-      const failedFullResponse = fullResponses.find((response) => !response.ok);
+      const failedFullResponse = fullResponses.slice(0, 5).find((response) => !response.ok);
       if (failedFullResponse) {
         setError(`Не удалось загрузить данные: ${await getApiError(failedFullResponse)}`);
         return;
@@ -397,6 +443,18 @@ function App() {
       setLogs(await fullResponses[2].json());
       setBotStatus(await fullResponses[3].json());
       setStaff(loadedStaff);
+      if (fullResponses[5].ok) {
+        const loadedBotSettings: BotSettingsResponse = await fullResponses[5].json();
+        setBotProfile(loadedBotSettings.profile);
+        setBotProfileDraft(loadedBotSettings.profile);
+        setBotMessages(loadedBotSettings.messages);
+        setBotMessageDrafts(Object.fromEntries(loadedBotSettings.messages.map((item) => [item.key, item.text])));
+        await loadBotAvatar(loadedBotSettings.profile.avatar_id);
+      } else {
+        setBotProfile(null);
+        setBotProfileDraft(null);
+        setBotMessages([]);
+      }
       setQuestionDrafts(Object.fromEntries(loadedQuestions.map((question) => [question.id, question])));
       setStaffRoleDrafts(Object.fromEntries(
         loadedStaff
@@ -415,11 +473,6 @@ function App() {
     setError(null);
     setFeedback(null);
     const selectedRoles = applicationRoles[id] ?? [];
-    if (action === "approve" && selectedRoles.length === 0) {
-      setError("Перед одобрением выберите хотя бы одну роль участника.");
-      return;
-    }
-
     const response = await fetch(`${apiBaseUrl}/applications/${id}/${action}`, {
       method: "POST",
       headers: { ...authHeaders(initData), "Content-Type": "application/json" },
@@ -828,8 +881,122 @@ function App() {
     }
   }
 
+  async function loadBotAvatar(avatarId: string | null) {
+    if (botAvatarUrlRef.current) {
+      URL.revokeObjectURL(botAvatarUrlRef.current);
+      botAvatarUrlRef.current = null;
+    }
+    setBotAvatarUrl(null);
+    if (!avatarId) return;
+
+    const response = await fetch(`${apiBaseUrl}/bot-settings/avatar?v=${encodeURIComponent(avatarId)}`, {
+      headers: authHeaders(initData),
+    });
+    if (!response.ok) return;
+    const objectUrl = URL.createObjectURL(await response.blob());
+    botAvatarUrlRef.current = objectUrl;
+    setBotAvatarUrl(objectUrl);
+  }
+
+  async function saveBotProfile() {
+    if (!botProfileDraft) return;
+    setError(null);
+    setFeedback(null);
+    const response = await fetch(`${apiBaseUrl}/bot-settings/profile`, {
+      method: "PUT",
+      headers: { ...authHeaders(initData), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: botProfileDraft.name.trim(),
+        short_description: botProfileDraft.short_description.trim(),
+        description: botProfileDraft.description.trim(),
+      }),
+    });
+    if (!response.ok) {
+      setError(`Не удалось обновить профиль: ${await getApiError(response)}`);
+      return;
+    }
+    const profile: BotProfile = await response.json();
+    setBotProfile(profile);
+    setBotProfileDraft(profile);
+    setFeedback("Профиль бота обновлен в Telegram.");
+  }
+
+  async function uploadBotAvatar(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setError(null);
+    setFeedback(null);
+    const formData = new FormData();
+    formData.append("avatar", file);
+    const response = await fetch(`${apiBaseUrl}/bot-settings/avatar`, {
+      method: "PUT",
+      headers: authHeaders(initData),
+      body: formData,
+    });
+    if (!response.ok) {
+      setError(`Не удалось обновить аватар: ${await getApiError(response)}`);
+      return;
+    }
+    setFeedback("Аватар бота обновлен в Telegram.");
+    await loadAll();
+  }
+
+  async function removeBotAvatar() {
+    if (!botProfile?.avatar_id || !window.confirm("Удалить текущий аватар бота?")) return;
+    setError(null);
+    setFeedback(null);
+    const response = await fetch(`${apiBaseUrl}/bot-settings/avatar`, {
+      method: "DELETE",
+      headers: authHeaders(initData),
+    });
+    if (!response.ok) {
+      setError(`Не удалось удалить аватар: ${await getApiError(response)}`);
+      return;
+    }
+    setFeedback("Аватар бота удален.");
+    await loadAll();
+  }
+
+  async function saveBotText(key: string) {
+    setError(null);
+    setFeedback(null);
+    const response = await fetch(`${apiBaseUrl}/bot-settings/messages/${key}`, {
+      method: "PUT",
+      headers: { ...authHeaders(initData), "Content-Type": "application/json" },
+      body: JSON.stringify({ text: botMessageDrafts[key] ?? "" }),
+    });
+    if (!response.ok) {
+      setError(`Не удалось сохранить текст: ${await getApiError(response)}`);
+      return;
+    }
+    const updated: BotTextSetting = await response.json();
+    setBotMessages((current) => current.map((item) => item.key === key ? updated : item));
+    setBotMessageDrafts((current) => ({ ...current, [key]: updated.text }));
+    setFeedback(`Текст «${updated.title}» сохранен.`);
+  }
+
+  async function resetBotText(item: BotTextSetting) {
+    if (!item.is_custom || !window.confirm(`Вернуть исходный текст «${item.title}»?`)) return;
+    setError(null);
+    setFeedback(null);
+    const response = await fetch(`${apiBaseUrl}/bot-settings/messages/${item.key}`, {
+      method: "DELETE",
+      headers: authHeaders(initData),
+    });
+    if (!response.ok) {
+      setError(`Не удалось сбросить текст: ${await getApiError(response)}`);
+      return;
+    }
+    const updated: BotTextSetting = await response.json();
+    setBotMessages((current) => current.map((currentItem) => currentItem.key === item.key ? updated : currentItem));
+    setBotMessageDrafts((current) => ({ ...current, [item.key]: updated.text }));
+    setFeedback(`Текст «${item.title}» восстановлен.`);
+  }
+
   const selectedTopic = topics.find((topic) => topic.id === selectedTopicId) ?? null;
   const hasFullAccess = currentAdmin?.role === "owner" || currentAdmin?.role === "admin";
+  const botMessageCategories = Array.from(new Set(botMessages.map((item) => item.category)));
 
   return (
     <main className="shell">
@@ -852,6 +1019,9 @@ function App() {
         </button>
         {hasFullAccess && <button className={activeTab === "settings" ? "active" : ""} onClick={() => setActiveTab("settings")}>
           <Settings size={18} /> Настройки
+        </button>}
+        {hasFullAccess && <button className={activeTab === "bot" ? "active" : ""} onClick={() => setActiveTab("bot")}>
+          <BotIcon size={18} /> Настройка бота
         </button>}
         {hasFullAccess && <button className={activeTab === "logs" ? "active" : ""} onClick={() => setActiveTab("logs")}>
           <Activity size={18} /> Логи
@@ -930,7 +1100,7 @@ function App() {
 
                 {item.status === "pending" ? (
                   <div className="review-block">
-                    <label>Роли после одобрения</label>
+                    <label>Роли после одобрения (необязательно)</label>
                     <div className="role-choice-grid application-role-options">
                       {roles.map((role) => {
                         const checked = (applicationRoles[item.id] ?? []).includes(role.code);
@@ -1200,6 +1370,69 @@ function App() {
               </div>
             </>
           )}
+        </section>
+      )}
+
+      {activeTab === "bot" && hasFullAccess && (
+        <section className="section-content">
+          <div className="section-heading">
+            <div><h2>Настройка бота</h2><p>Профиль Telegram и сообщения пользователям</p></div>
+            <span className="count">{botMessages.length}</span>
+          </div>
+
+          {botProfileDraft && (
+            <div className="bot-profile-settings">
+              <div className="bot-avatar-column">
+                <div className="bot-avatar-preview">
+                  {botAvatarUrl ? <img src={botAvatarUrl} alt="Аватар бота" /> : <BotIcon size={42} />}
+                </div>
+                <strong>{botProfileDraft.name}</strong>
+                <span>{botProfileDraft.username ? `@${botProfileDraft.username}` : `ID ${botProfileDraft.id}`}</span>
+                <input
+                  ref={avatarInputRef}
+                  className="hidden-file-input"
+                  type="file"
+                  accept="image/jpeg,.jpg,.jpeg"
+                  onChange={uploadBotAvatar}
+                />
+                <div className="avatar-actions">
+                  <button onClick={() => avatarInputRef.current?.click()}><Camera size={17} /> Заменить</button>
+                  <button className="icon-button danger-icon" disabled={!botProfile?.avatar_id} onClick={removeBotAvatar} title="Удалить аватар" aria-label="Удалить аватар"><Trash2 size={17} /></button>
+                </div>
+              </div>
+              <div className="bot-profile-fields">
+                <label>Имя бота<input maxLength={64} value={botProfileDraft.name} onChange={(event) => setBotProfileDraft({ ...botProfileDraft, name: event.target.value })} /></label>
+                <label>Краткое описание<textarea maxLength={120} value={botProfileDraft.short_description} onChange={(event) => setBotProfileDraft({ ...botProfileDraft, short_description: event.target.value })} /></label>
+                <label>Полное описание<textarea maxLength={512} value={botProfileDraft.description} onChange={(event) => setBotProfileDraft({ ...botProfileDraft, description: event.target.value })} /></label>
+                <button className="save-permissions" onClick={saveBotProfile}><Save size={17} /> Сохранить профиль</button>
+              </div>
+            </div>
+          )}
+
+          <div className="bot-texts-heading">
+            <div><h3>Сообщения бота</h3><p>Тексты применяются сразу после сохранения</p></div>
+          </div>
+          {botMessageCategories.map((category) => (
+            <section className="bot-message-group" key={category}>
+              <h3>{category}</h3>
+              <div className="bot-message-list">
+                {botMessages.filter((item) => item.category === category).map((item) => (
+                  <article className="bot-message-row" key={item.key}>
+                    <div className="bot-message-meta">
+                      <div><strong>{item.title}</strong><span className={item.is_custom ? "custom-text-status" : "default-text-status"}>{item.is_custom ? "Изменен" : "Исходный"}</span></div>
+                      <p>{item.description}</p>
+                      {item.variables.length > 0 && <div className="template-variables">{item.variables.map((variable) => <code key={variable}>{`{${variable}}`}</code>)}</div>}
+                    </div>
+                    <textarea value={botMessageDrafts[item.key] ?? item.text} onChange={(event) => setBotMessageDrafts((current) => ({ ...current, [item.key]: event.target.value }))} />
+                    <div className="bot-message-actions">
+                      <button className="icon-button" disabled={!item.is_custom} onClick={() => resetBotText(item)} title="Вернуть исходный текст" aria-label="Вернуть исходный текст"><RotateCcw size={17} /></button>
+                      <button className="icon-button" onClick={() => saveBotText(item.key)} title="Сохранить текст" aria-label="Сохранить текст"><Save size={17} /></button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ))}
         </section>
       )}
 

@@ -24,6 +24,7 @@ from app.db.models import (
 )
 from app.db.session import get_session
 from app.services.notification_service import notify_application_decision
+from app.services.bot_text_service import render_bot_text
 from app.services.role_service import get_user_roles_map, set_user_roles
 
 router = APIRouter()
@@ -157,9 +158,6 @@ async def approve_application(
         raise HTTPException(status_code=404, detail="Заявка не найдена")
     if application.status != "pending":
         raise HTTPException(status_code=409, detail="Заявка уже обработана")
-    if not payload.role_codes:
-        raise HTTPException(status_code=422, detail="Перед одобрением назначьте хотя бы одну роль")
-
     try:
         roles = await set_user_roles(session, application.user_id, payload.role_codes)
     except ValueError as exc:
@@ -269,9 +267,12 @@ async def ban_application_user(
     warning: str | None = None
     bot = Bot(settings.bot_token)
     try:
-        text = "⛔ <b>Доступ к Prod.by заблокирован.</b>"
+        text = await render_bot_text("user_banned")
         if payload.comment:
-            text += f"\n\n💬 <b>Комментарий администрации</b>\n{escape(payload.comment)}"
+            text += "\n\n" + await render_bot_text(
+                "admin_comment",
+                comment=escape(payload.comment),
+            )
         try:
             await bot.send_message(application.user.telegram_id, text, parse_mode="HTML")
             notification_sent = True

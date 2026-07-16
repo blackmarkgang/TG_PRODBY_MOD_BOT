@@ -7,6 +7,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.core.config import settings
 from app.db.models import Application
+from app.services.bot_text_service import render_bot_text
 
 
 async def notify_application_decision(
@@ -36,25 +37,37 @@ async def notify_application_decision(
             else:
                 warning = "Решение сохранено, но TELEGRAM_GROUP_ID не настроен."
 
-            text = "🎉 <b>Ваша заявка одобрена!</b>\n\nДобро пожаловать в сообщество Prod.by."
+            parts = [await render_bot_text("application_approved")]
             if role_title:
-                text += f"\n\n🎭 Назначенные роли: <b>{escape(role_title)}</b>"
+                parts.append(await render_bot_text("assigned_roles", roles=escape(role_title)))
             if application.admin_comment:
-                text += f"\n\n💬 <b>Комментарий администрации</b>\n{escape(application.admin_comment)}"
+                parts.append(
+                    await render_bot_text(
+                        "admin_comment",
+                        comment=escape(application.admin_comment),
+                    )
+                )
             if invite_url:
-                text += "\n\n🔗 Ссылка действует <b>7 дней</b> и рассчитана на одно вступление."
+                parts.append(await render_bot_text("invite_ready"))
                 keyboard = InlineKeyboardMarkup(
                     inline_keyboard=[
                         [InlineKeyboardButton(text="🚪 Вступить в Prod.by", url=invite_url)]
                     ]
                 )
             else:
-                text += "\n\n⚠️ Ссылка на вход пока недоступна. Администрация должна проверить права бота."
+                parts.append(await render_bot_text("invite_unavailable"))
                 keyboard = None
+            text = "\n\n".join(parts)
         else:
-            text = "📩 <b>Решение по заявке</b>\n\nВаша заявка в сообщество Prod.by отклонена."
+            parts = [await render_bot_text("application_rejected")]
             if application.admin_comment:
-                text += f"\n\n💬 <b>Комментарий администрации</b>\n{escape(application.admin_comment)}"
+                parts.append(
+                    await render_bot_text(
+                        "admin_comment",
+                        comment=escape(application.admin_comment),
+                    )
+                )
+            text = "\n\n".join(parts)
             keyboard = None
 
         try:

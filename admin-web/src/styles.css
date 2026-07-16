@@ -1030,6 +1030,215 @@ textarea {
   gap: 4px;
 }
 
+.bot-profile-settings {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 28px;
+  border-top: 1px solid #2a2a2a;
+  border-bottom: 1px solid #2a2a2a;
+  padding: 24px 0;
+}
+
+.bot-avatar-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  border-right: 1px solid #2a2a2a;
+  padding-right: 28px;
+  text-align: center;
+}
+
+.bot-avatar-column > span {
+  color: #888888;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.bot-avatar-preview {
+  width: 112px;
+  height: 112px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #333333;
+  border-radius: 50%;
+  background: #111111;
+  color: #63ff66;
+  overflow: hidden;
+  margin-bottom: 5px;
+}
+
+.bot-avatar-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.hidden-file-input {
+  display: none;
+}
+
+.avatar-actions {
+  display: flex;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.avatar-actions button:first-of-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.bot-profile-fields {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-content: start;
+}
+
+.bot-profile-fields label {
+  display: grid;
+  gap: 7px;
+  color: #aaaaaa;
+  font-size: 13px;
+}
+
+.bot-profile-fields label:last-of-type {
+  grid-column: 1 / -1;
+}
+
+.bot-profile-fields textarea {
+  min-height: 96px;
+}
+
+.bot-profile-fields label:last-of-type textarea {
+  min-height: 126px;
+}
+
+.bot-profile-fields .save-permissions {
+  justify-self: start;
+  margin-top: 0;
+}
+
+.bot-texts-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  padding-top: 8px;
+}
+
+.bot-texts-heading h3,
+.bot-message-group > h3 {
+  margin: 0;
+}
+
+.bot-texts-heading p,
+.bot-message-meta p {
+  color: #888888;
+  font-size: 13px;
+}
+
+.bot-texts-heading p {
+  margin: 5px 0 0;
+}
+
+.bot-message-group {
+  display: grid;
+  gap: 9px;
+}
+
+.bot-message-group > h3 {
+  color: #63ff66;
+  font-size: 14px;
+  text-transform: uppercase;
+}
+
+.bot-message-list {
+  display: grid;
+  gap: 8px;
+}
+
+.bot-message-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(190px, 0.7fr) minmax(320px, 1.3fr) 88px;
+  align-items: start;
+  gap: 16px;
+  border: 1px solid #2a2a2a;
+  border-radius: 4px;
+  background: #101010;
+  padding: 14px;
+}
+
+.bot-message-meta {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.bot-message-meta > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+}
+
+.bot-message-meta p {
+  margin: 0;
+}
+
+.custom-text-status,
+.default-text-status {
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 11px;
+  padding: 4px 6px;
+  white-space: nowrap;
+}
+
+.custom-text-status {
+  color: #ffa24b;
+}
+
+.default-text-status {
+  color: #777777;
+}
+
+.template-variables {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.template-variables code {
+  border: 1px solid #333333;
+  border-radius: 3px;
+  color: #63ff66;
+  font-size: 11px;
+  padding: 3px 5px;
+}
+
+.bot-message-row > textarea {
+  min-height: 136px;
+  line-height: 1.42;
+}
+
+.bot-message-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.bot-message-actions button:disabled,
+.avatar-actions button:disabled {
+  border-color: #292929;
+  color: #555555;
+  cursor: not-allowed;
+}
+
 @media (max-width: 720px) {
   .shell {
     padding: 0 14px 32px;
@@ -1153,8 +1362,29 @@ textarea {
   }
 
   .manual-topic,
-  .manual-topic-form {
+  .manual-topic-form,
+  .bot-profile-settings,
+  .bot-profile-fields,
+  .bot-message-row {
     grid-template-columns: 1fr;
+  }
+
+  .bot-avatar-column {
+    border-right: 0;
+    border-bottom: 1px solid #2a2a2a;
+    padding: 0 0 22px;
+  }
+
+  .bot-profile-fields label:last-of-type {
+    grid-column: auto;
+  }
+
+  .bot-message-actions {
+    justify-content: flex-start;
+  }
+
+  .bot-message-actions .icon-button {
+    flex: 1;
   }
 
   .manual-topic-form .icon-button {

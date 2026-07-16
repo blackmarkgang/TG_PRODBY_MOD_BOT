@@ -20,6 +20,7 @@ from app.db.models import (
     UserRole,
 )
 from app.db.session import SessionLocal
+from app.services.bot_text_service import render_bot_text
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -202,25 +203,25 @@ async def moderate_forum_topic(message: Message) -> None:
 
     display_name = html.escape(message.from_user.full_name)
     mention = f'<a href="tg://user?id={message.from_user.id}">{display_name}</a>'
-    warning_text = (
-        "⛔ <b>Доступ к сообществу заблокирован</b>"
-        if user is not None and user.is_banned
-        else "⛔ <b>Нет доступа к публикации</b>"
-    )
-    warning_detail = (
-        f"{mention}, вы не можете публиковать сообщения."
-        if user is not None and user.is_banned
-        else f"{mention}, для этой темы нужна разрешенная роль."
-    )
-    if timeout_applied:
-        warning_detail += (
-            f" Таймаут на отправку сообщений: <b>{settings.moderation_timeout_seconds} сек.</b>"
+    if user is not None and user.is_banned:
+        warning_text = await render_bot_text("moderation_banned", mention=mention)
+    else:
+        timeout = ""
+        if timeout_applied:
+            timeout = " " + await render_bot_text(
+                "moderation_timeout",
+                seconds=settings.moderation_timeout_seconds,
+            )
+        warning_text = await render_bot_text(
+            "moderation_missing_role",
+            mention=mention,
+            timeout=timeout,
         )
     try:
         warning = await message.bot.send_message(
             chat_id=message.chat.id,
             message_thread_id=message.message_thread_id,
-            text=f"{warning_text}\n{warning_detail}",
+            text=warning_text,
             parse_mode="HTML",
         )
         asyncio.create_task(delete_warning_later(message.bot, message.chat.id, warning.message_id))
