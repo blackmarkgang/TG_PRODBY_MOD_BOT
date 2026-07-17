@@ -31,10 +31,44 @@ class RolePayload(BaseModel):
         return title
 
 
+END_QUESTION_CODE = "__end__"
+
+
+class QuestionOptionPayload(BaseModel):
+    id: str | None = Field(default=None, max_length=32)
+    label: str = Field(min_length=1, max_length=64)
+    next_question_code: str | None = Field(default=None, max_length=64)
+
+    @field_validator("label")
+    @classmethod
+    def clean_label(cls, value: str) -> str:
+        label = value.strip()
+        if not label:
+            raise ValueError("Вариант ответа не может быть пустым")
+        return label
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, value: str | None) -> str | None:
+        if value is not None and (
+            not value
+            or not all(character.isascii() and (character.isalnum() or character in "_-") for character in value)
+        ):
+            raise ValueError("ID варианта содержит недопустимые символы")
+        return value
+
+    @field_validator("next_question_code")
+    @classmethod
+    def clean_option_next_question_code(cls, value: str | None) -> str | None:
+        return (value.strip() or None) if value is not None else None
+
+
 class QuestionPayload(BaseModel):
     text: str = Field(min_length=1, max_length=512)
     help_text: str | None = Field(default=None, max_length=2_000)
     answer_type: str = "text"
+    options: list[QuestionOptionPayload] = Field(default_factory=list, max_length=20)
+    next_question_code: str | None = Field(default=None, max_length=64)
 
     @field_validator("text")
     @classmethod
@@ -52,9 +86,14 @@ class QuestionPayload(BaseModel):
     @field_validator("answer_type")
     @classmethod
     def validate_answer_type(cls, value: str) -> str:
-        if value not in {"text", "number"}:
-            raise ValueError("Поддерживаются типы text и number")
+        if value not in {"text", "number", "single_choice"}:
+            raise ValueError("Поддерживаются типы text, number и single_choice")
         return value
+
+    @field_validator("next_question_code")
+    @classmethod
+    def clean_next_question_code(cls, value: str | None) -> str | None:
+        return (value.strip() or None) if value is not None else None
 
 
 class QuestionOrderPayload(BaseModel):
@@ -165,15 +204,24 @@ async def create_question(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     max_order = await session.scalar(select(func.max(ApplicationQuestion.sort_order))) or 0
+    options = normalize_question_options(payload.options)
+    if payload.answer_type == "single_choice" and not options:
+        options = [
+            {"id": uuid4().hex[:10], "label": "Вариант 1", "next_question_code": None},
+            {"id": uuid4().hex[:10], "label": "Вариант 2", "next_question_code": None},
+        ]
     question = ApplicationQuestion(
         code=f"custom_{uuid4().hex[:10]}",
         text=payload.text,
         help_text=payload.help_text,
         answer_type=payload.answer_type,
+        options_json=options if payload.answer_type == "single_choice" else [],
+        next_question_code=payload.next_question_code,
         sort_order=max_order + 1,
     )
     session.add(question)
     await session.flush()
+    await validate_question_graph(session)
     session.add(
         AuditLog(
             admin_id=admin.id,
@@ -200,6 +248,14 @@ async def update_question(
     question.text = payload.text
     question.help_text = payload.help_text
     question.answer_type = payload.answer_type
+    question.options_json = (
+        normalize_question_options(payload.options)
+        if payload.answer_type == "single_choice"
+        else []
+    )
+    question.next_question_code = payload.next_question_code
+    await session.flush()
+    await validate_question_graph(session)
     session.add(
         AuditLog(
             admin_id=admin.id,
@@ -226,6 +282,8 @@ async def update_question_order(
     positions = {question_id: index for index, question_id in enumerate(payload.question_ids, start=1)}
     for question in questions:
         question.sort_order = positions[question.id]
+    await session.flush()
+    await validate_question_graph(session)
     session.add(
         AuditLog(
             admin_id=admin.id,
@@ -250,6 +308,21 @@ async def delete_question(
     count = await session.scalar(select(func.count()).select_from(ApplicationQuestion))
     if count is not None and count <= 1:
         raise HTTPException(status_code=409, detail="В анкете должен остаться хотя бы один вопрос")
+    result = await session.execute(select(ApplicationQuestion))
+    for other_question in result.scalars().all():
+        if other_question.id == question.id:
+            continue
+        if other_question.next_question_code == question.code:
+            other_question.next_question_code = None
+        other_question.options_json = [
+            {
+                **option,
+                "next_question_code": None
+                if option.get("next_question_code") == question.code
+                else option.get("next_question_code"),
+            }
+            for option in (other_question.options_json or [])
+        ]
     session.add(
         AuditLog(
             admin_id=admin.id,
@@ -271,5 +344,80 @@ def serialize_question(question: ApplicationQuestion) -> dict:
         "text": question.text,
         "help_text": question.help_text,
         "answer_type": question.answer_type,
+        "options": question.options_json or [],
+        "next_question_code": question.next_question_code,
         "sort_order": question.sort_order,
     }
+
+
+def normalize_question_options(options: list[QuestionOptionPayload]) -> list[dict]:
+    normalized = [
+        {
+            "id": option.id or uuid4().hex[:10],
+            "label": option.label,
+            "next_question_code": option.next_question_code,
+        }
+        for option in options
+    ]
+    ids = [option["id"] for option in normalized]
+    labels = [option["label"].casefold() for option in normalized]
+    if len(ids) != len(set(ids)):
+        raise HTTPException(status_code=422, detail="ID вариантов ответа должны быть уникальными")
+    if len(labels) != len(set(labels)):
+        raise HTTPException(status_code=422, detail="Варианты ответа не должны повторяться")
+    return normalized
+
+
+async def validate_question_graph(session: AsyncSession) -> None:
+    result = await session.execute(
+        select(ApplicationQuestion).order_by(ApplicationQuestion.sort_order)
+    )
+    questions = list(result.scalars().all())
+    validate_question_graph_data(questions)
+
+
+def validate_question_graph_data(questions: list[ApplicationQuestion]) -> None:
+    codes = {question.code for question in questions}
+    edges: dict[str, set[str]] = {question.code: set() for question in questions}
+
+    for index, question in enumerate(questions):
+        targets: list[str | None]
+        if question.answer_type == "single_choice":
+            if not question.options_json:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Добавьте варианты ответа для вопроса «{question.text}»",
+                )
+            targets = [
+                option.get("next_question_code") or question.next_question_code
+                for option in question.options_json
+            ]
+        else:
+            targets = [question.next_question_code]
+        for target in targets:
+            if target is None:
+                if index + 1 < len(questions):
+                    edges[question.code].add(questions[index + 1].code)
+                continue
+            if target == END_QUESTION_CODE:
+                continue
+            if target not in codes:
+                raise HTTPException(status_code=422, detail=f"Следующий вопрос «{target}» не найден")
+            edges[question.code].add(target)
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(code: str) -> None:
+        if code in visiting:
+            raise HTTPException(status_code=422, detail="Ветвление содержит цикл")
+        if code in visited:
+            return
+        visiting.add(code)
+        for target in edges[code]:
+            visit(target)
+        visiting.remove(code)
+        visited.add(code)
+
+    for code in edges:
+        visit(code)

@@ -15,3 +15,17 @@ def portfolio_keyboard(has_attachments: bool = False) -> ReplyKeyboardMarkup:
         keyboard=[[KeyboardButton(text=button_text)]],
         resize_keyboard=True,
     )
+
+
+def question_choice_keyboard(question_code: str, options: list[dict]) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=option["label"],
+                    callback_data=f"question_choice:{question_code}:{option['id']}",
+                )
+            ]
+            for option in options
+        ]
+    )

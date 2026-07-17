@@ -874,13 +874,15 @@ textarea {
 }
 
 .question-row {
-  min-height: 92px;
+  border-bottom: 1px solid #2a2a2a;
+  padding: 14px 2px 18px;
+}
+
+.question-main-row {
   display: grid;
-  grid-template-columns: 98px minmax(300px, 1fr) minmax(120px, 0.28fr) auto;
+  grid-template-columns: 98px minmax(300px, 1fr) minmax(140px, 0.3fr) auto;
   align-items: center;
   gap: 12px;
-  border-bottom: 1px solid #2a2a2a;
-  padding: 12px 2px;
 }
 
 .question-order {
@@ -908,6 +910,62 @@ textarea {
   min-width: 0;
   display: grid;
   gap: 7px;
+}
+
+.question-transition {
+  display: grid;
+  grid-template-columns: 98px minmax(260px, 520px);
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 0;
+}
+
+.question-transition label {
+  color: #8b8b8b;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.question-options-editor {
+  margin: 14px 0 0 98px;
+  padding: 14px;
+  border-left: 2px solid #63ff66;
+  background: #111111;
+  display: grid;
+  gap: 9px;
+}
+
+.question-options-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.question-options-heading span {
+  color: #777777;
+  font-size: 12px;
+}
+
+.question-option-row {
+  display: grid;
+  grid-template-columns: 24px minmax(180px, 0.8fr) minmax(240px, 1.2fr) 38px;
+  align-items: center;
+  gap: 8px;
+}
+
+.question-option-row > span {
+  color: #63ff66;
+  font-size: 12px;
+  text-align: center;
+}
+
+.add-option-button {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 3px;
 }
 
 .staff-create {
@@ -1333,7 +1391,7 @@ textarea {
   .create-config-row,
   .question-create,
   .config-row,
-  .question-row,
+  .question-main-row,
   .staff-create,
   .staff-row,
   .audit-row {
@@ -1350,6 +1408,28 @@ textarea {
 
   .question-order {
     justify-content: flex-start;
+  }
+
+  .question-transition,
+  .question-option-row {
+    grid-template-columns: 1fr;
+  }
+
+  .question-transition {
+    gap: 6px;
+  }
+
+  .question-options-editor {
+    margin-left: 0;
+  }
+
+  .question-options-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .question-option-row > span {
+    text-align: left;
   }
 
   .config-actions .icon-button {

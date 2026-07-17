@@ -7,7 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 from sqlalchemy import select
 
-from app.bot.keyboards import portfolio_keyboard
+from app.bot.keyboards import portfolio_keyboard, question_choice_keyboard
 from app.bot.states import ApplicationForm
 from app.db.models import ApplicationQuestion
 from app.db.session import SessionLocal
@@ -47,6 +47,8 @@ async def load_questions() -> list[dict]:
                 "text": question.text,
                 "help_text": question.help_text,
                 "answer_type": question.answer_type,
+                "options": question.options_json or [],
+                "next_question_code": question.next_question_code,
             }
             for question in result.scalars().all()
         ]
@@ -97,6 +99,7 @@ async def begin_application(message: Message, state: FSMContext, telegram_id: in
         questions=questions,
         question_index=0,
         question_answers={},
+        visited_question_codes=[],
     )
     if questions:
         await state.set_state(ApplicationForm.question)
@@ -110,23 +113,32 @@ async def show_question(message: Message, state: FSMContext) -> None:
     questions = data["questions"]
     index = data["question_index"]
     question = questions[index]
-    body = (
-        escape(question["help_text"])
-        if question.get("help_text")
-        else await render_bot_text("question_default_help")
-    )
+    current_step = len(data.get("visited_question_codes", [])) + 1
+    if question.get("help_text"):
+        body = escape(question["help_text"])
+    elif question["answer_type"] == "single_choice":
+        body = await render_bot_text("choice_hint")
+    else:
+        body = await render_bot_text("question_default_help")
     if question["answer_type"] == "number":
         body += f"\n\n{await render_bot_text('number_hint')}"
+    elif question["answer_type"] == "single_choice" and question.get("help_text"):
+        body += f"\n\n{await render_bot_text('choice_hint')}"
+    reply_markup = (
+        question_choice_keyboard(question["code"], question["options"])
+        if question["answer_type"] == "single_choice" and question["options"]
+        else ReplyKeyboardRemove()
+    )
     await answer_form(
         message,
         await render_bot_text(
             "question_prompt",
             question=escape(question["text"]),
             help_text=body,
-            step=index + 1,
+            step=current_step,
             total=len(questions) + 1,
         ),
-        reply_markup=ReplyKeyboardRemove(),
+        reply_markup=reply_markup,
     )
 
 
@@ -136,6 +148,9 @@ async def receive_question_answer(message: Message, state: FSMContext) -> None:
     questions = data["questions"]
     index = data["question_index"]
     question = questions[index]
+    if question["answer_type"] == "single_choice":
+        await answer_form(message, await render_bot_text("choice_answer_required"))
+        return
     answer = message.text.strip() if message.text else ""
     if not answer:
         await answer_form(
@@ -153,25 +168,99 @@ async def receive_question_answer(message: Message, state: FSMContext) -> None:
         )
         return
 
+    await save_answer_and_advance(message, state, answer)
+
+
+@router.callback_query(ApplicationForm.question, F.data.startswith("question_choice:"))
+async def receive_question_choice(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    questions = data.get("questions", [])
+    index = data.get("question_index", 0)
+    if index >= len(questions):
+        await callback.answer()
+        return
+    question = questions[index]
+    parts = (callback.data or "").split(":", 2)
+    if len(parts) != 3 or question["answer_type"] != "single_choice" or parts[1] != question["code"]:
+        await callback.answer(await render_bot_text("choice_expired"), show_alert=False)
+        return
+    option = next((item for item in question["options"] if item["id"] == parts[2]), None)
+    if option is None:
+        await callback.answer(await render_bot_text("choice_missing"), show_alert=False)
+        return
+    await callback.answer()
+    if isinstance(callback.message, Message):
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramAPIError:
+            pass
+        await save_answer_and_advance(
+            callback.message,
+            state,
+            option["label"],
+            option.get("next_question_code"),
+        )
+
+
+async def save_answer_and_advance(
+    message: Message,
+    state: FSMContext,
+    answer: str,
+    option_next_question_code: str | None = None,
+) -> None:
+    data = await state.get_data()
+    questions = data["questions"]
+    index = data["question_index"]
+    question = questions[index]
     answers = dict(data.get("question_answers", {}))
     answers[question["code"]] = answer
-    next_index = index + 1
-    await state.update_data(question_answers=answers, question_index=next_index)
+    visited = list(data.get("visited_question_codes", []))
+    visited.append(question["code"])
+
+    target_code = option_next_question_code or question.get("next_question_code")
+    next_index = resolve_next_question_index(questions, index, target_code)
+
+    if next_index < len(questions) and questions[next_index]["code"] in visited:
+        await answer_form(message, await render_bot_text("questionnaire_flow_error"))
+        await state.clear()
+        return
+
+    await state.update_data(
+        question_answers=answers,
+        question_index=next_index,
+        visited_question_codes=visited,
+    )
     if next_index < len(questions):
         await show_question(message, state)
     else:
         await show_portfolio_step(message, state)
 
 
+def resolve_next_question_index(
+    questions: list[dict],
+    current_index: int,
+    target_code: str | None,
+) -> int:
+    if target_code == "__end__":
+        return len(questions)
+    if target_code:
+        return next(
+            (position for position, item in enumerate(questions) if item["code"] == target_code),
+            len(questions),
+        )
+    return current_index + 1
+
+
 async def show_portfolio_step(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     questions = data.get("questions", [])
+    answered_questions = len(data.get("question_answers", {}))
     await state.set_state(ApplicationForm.portfolio)
     await answer_form(
         message,
         await render_bot_text(
             "portfolio_prompt",
-            step=len(questions) + 1,
+            step=answered_questions + 1,
             total=len(questions) + 1,
             max_attachments=MAX_ATTACHMENTS,
         ),

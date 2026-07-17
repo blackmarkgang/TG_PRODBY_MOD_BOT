@@ -88,6 +88,8 @@ class ApplicationQuestion(Base):
     text: Mapped[str] = mapped_column(String(512), nullable=False)
     help_text: Mapped[str | None] = mapped_column(Text)
     answer_type: Mapped[str] = mapped_column(String(32), nullable=False, default="text")
+    options_json: Mapped[list[dict]] = mapped_column(JSONB, nullable=False, default=list)
+    next_question_code: Mapped[str | None] = mapped_column(String(64))
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

@@ -99,8 +99,16 @@ type Question = {
   code: string;
   text: string;
   help_text: string | null;
-  answer_type: "text" | "number";
+  answer_type: "text" | "number" | "single_choice";
+  options: QuestionOption[];
+  next_question_code: string | null;
   sort_order: number;
+};
+
+type QuestionOption = {
+  id: string;
+  label: string;
+  next_question_code: string | null;
 };
 
 type AuditEntry = {
@@ -301,6 +309,14 @@ function getPreviewKind(file: ApplicationFile): PreviewKind {
   return null;
 }
 
+function newQuestionOption(): QuestionOption {
+  return {
+    id: crypto.randomUUID().replace(/-/g, "").slice(0, 10),
+    label: "",
+    next_question_code: null,
+  };
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>("applications");
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("topics");
@@ -326,7 +342,7 @@ function App() {
   const [newRoleTitle, setNewRoleTitle] = useState("");
   const [newQuestionText, setNewQuestionText] = useState("");
   const [newQuestionHelp, setNewQuestionHelp] = useState("");
-  const [newQuestionType, setNewQuestionType] = useState<"text" | "number">("text");
+  const [newQuestionType, setNewQuestionType] = useState<"text" | "number" | "single_choice">("text");
   const [selectedTopicId, setSelectedTopicId] = useState<number | null>(null);
   const [topicRoleDrafts, setTopicRoleDrafts] = useState<Record<number, string[]>>({});
   const [topicTitleDrafts, setTopicTitleDrafts] = useState<Record<number, string>>({});
@@ -712,6 +728,8 @@ function App() {
         text,
         help_text: newQuestionHelp.trim() || null,
         answer_type: newQuestionType,
+        options: [],
+        next_question_code: null,
       }),
     });
     if (!response.ok) {
@@ -731,6 +749,17 @@ function App() {
       setError("Текст вопроса не может быть пустым.");
       return;
     }
+    if (question.answer_type === "single_choice") {
+      const labels = question.options.map((option) => option.label.trim()).filter(Boolean);
+      if (labels.length < 2) {
+        setError("Добавьте минимум два заполненных варианта ответа.");
+        return;
+      }
+      if (new Set(labels.map((label) => label.toLocaleLowerCase("ru"))).size !== labels.length) {
+        setError("Варианты ответа не должны повторяться.");
+        return;
+      }
+    }
     const response = await fetch(`${apiBaseUrl}/settings/questions/${questionId}`, {
       method: "PATCH",
       headers: { ...authHeaders(initData), "Content-Type": "application/json" },
@@ -738,6 +767,10 @@ function App() {
         text: question.text.trim(),
         help_text: question.help_text?.trim() || null,
         answer_type: question.answer_type,
+        options: question.answer_type === "single_choice"
+          ? question.options.map((option) => ({ ...option, label: option.label.trim() }))
+          : [],
+        next_question_code: question.next_question_code,
       }),
     });
     if (!response.ok) {
@@ -746,6 +779,40 @@ function App() {
     }
     setFeedback("Вопрос обновлен.");
     await loadAll();
+  }
+
+  function changeQuestionType(question: Question, answerType: Question["answer_type"]) {
+    const options = answerType === "single_choice"
+      ? (question.options.length > 0 ? question.options : [newQuestionOption(), newQuestionOption()])
+      : [];
+    setQuestionDrafts((current) => ({
+      ...current,
+      [question.id]: { ...question, answer_type: answerType, options },
+    }));
+  }
+
+  function addQuestionOption(question: Question) {
+    setQuestionDrafts((current) => ({
+      ...current,
+      [question.id]: { ...question, options: [...question.options, newQuestionOption()] },
+    }));
+  }
+
+  function updateQuestionOption(question: Question, optionId: string, patch: Partial<QuestionOption>) {
+    setQuestionDrafts((current) => ({
+      ...current,
+      [question.id]: {
+        ...question,
+        options: question.options.map((option) => option.id === optionId ? { ...option, ...patch } : option),
+      },
+    }));
+  }
+
+  function removeQuestionOption(question: Question, optionId: string) {
+    setQuestionDrafts((current) => ({
+      ...current,
+      [question.id]: { ...question, options: question.options.filter((option) => option.id !== optionId) },
+    }));
   }
 
   async function deleteQuestion(question: Question) {
@@ -1288,11 +1355,11 @@ function App() {
 
           {settingsSection === "questions" && (
             <>
-              <div className="section-heading"><div><h2>Настройка анкеты</h2><p>После вопросов бот отдельно предложит прикрепить файлы</p></div><span className="count">{questions.length}</span></div>
+              <div className="section-heading"><div><h2>Настройка анкеты</h2><p>Варианты ответа могут вести к разным следующим вопросам</p></div><span className="count">{questions.length}</span></div>
               <div className="question-create">
                 <input placeholder="Текст нового вопроса" value={newQuestionText} onChange={(event) => setNewQuestionText(event.target.value)} />
                 <input placeholder="Подсказка пользователю (необязательно)" value={newQuestionHelp} onChange={(event) => setNewQuestionHelp(event.target.value)} />
-                <select value={newQuestionType} onChange={(event) => setNewQuestionType(event.target.value as "text" | "number")}><option value="text">Текст</option><option value="number">Число</option></select>
+                <select value={newQuestionType} onChange={(event) => setNewQuestionType(event.target.value as Question["answer_type"])}><option value="text">Текст</option><option value="number">Число</option><option value="single_choice">Один вариант</option></select>
                 <button onClick={createQuestion}><Plus size={17} /> Добавить</button>
               </div>
               <div className="question-list">
@@ -1300,13 +1367,41 @@ function App() {
                   const draft = questionDrafts[question.id] ?? question;
                   return (
                     <article className="question-row" key={question.id}>
-                      <div className="question-order"><strong>{index + 1}</strong><button className="icon-button" disabled={index === 0} onClick={() => moveQuestion(question.id, -1)} title="Поднять"><ArrowUp size={16} /></button><button className="icon-button" disabled={index === questions.length - 1} onClick={() => moveQuestion(question.id, 1)} title="Опустить"><ArrowDown size={16} /></button></div>
-                      <div className="question-fields">
-                        <input value={draft.text} onChange={(event) => setQuestionDrafts((current) => ({ ...current, [question.id]: { ...draft, text: event.target.value } }))} />
-                        <input placeholder="Подсказка" value={draft.help_text ?? ""} onChange={(event) => setQuestionDrafts((current) => ({ ...current, [question.id]: { ...draft, help_text: event.target.value } }))} />
+                      <div className="question-main-row">
+                        <div className="question-order"><strong>{index + 1}</strong><button className="icon-button" disabled={index === 0} onClick={() => moveQuestion(question.id, -1)} title="Поднять"><ArrowUp size={16} /></button><button className="icon-button" disabled={index === questions.length - 1} onClick={() => moveQuestion(question.id, 1)} title="Опустить"><ArrowDown size={16} /></button></div>
+                        <div className="question-fields">
+                          <input value={draft.text} onChange={(event) => setQuestionDrafts((current) => ({ ...current, [question.id]: { ...draft, text: event.target.value } }))} />
+                          <input placeholder="Подсказка" value={draft.help_text ?? ""} onChange={(event) => setQuestionDrafts((current) => ({ ...current, [question.id]: { ...draft, help_text: event.target.value } }))} />
+                        </div>
+                        <select value={draft.answer_type} onChange={(event) => changeQuestionType(draft, event.target.value as Question["answer_type"])}><option value="text">Текст</option><option value="number">Число</option><option value="single_choice">Один вариант</option></select>
+                        <div className="config-actions"><button className="icon-button" onClick={() => saveQuestion(question.id)} title="Сохранить вопрос"><Save size={17} /></button><button className="icon-button danger-icon" onClick={() => deleteQuestion(question)} title="Удалить вопрос"><Trash2 size={17} /></button></div>
                       </div>
-                      <select value={draft.answer_type} onChange={(event) => setQuestionDrafts((current) => ({ ...current, [question.id]: { ...draft, answer_type: event.target.value as "text" | "number" } }))}><option value="text">Текст</option><option value="number">Число</option></select>
-                      <div className="config-actions"><button className="icon-button" onClick={() => saveQuestion(question.id)} title="Сохранить вопрос"><Save size={17} /></button><button className="icon-button danger-icon" onClick={() => deleteQuestion(question)} title="Удалить вопрос"><Trash2 size={17} /></button></div>
+                      <div className="question-transition">
+                        <label>После ответа</label>
+                        <select value={draft.next_question_code ?? ""} onChange={(event) => setQuestionDrafts((current) => ({ ...current, [question.id]: { ...draft, next_question_code: event.target.value || null } }))}>
+                          <option value="">Следующий по порядку</option>
+                          <option value="__end__">Завершить вопросы</option>
+                          {questions.filter((item) => item.code !== question.code).map((item) => <option key={item.code} value={item.code}>{questions.findIndex((candidate) => candidate.code === item.code) + 1}. {item.text}</option>)}
+                        </select>
+                      </div>
+                      {draft.answer_type === "single_choice" && (
+                        <div className="question-options-editor">
+                          <div className="question-options-heading"><strong>Варианты ответа</strong><span>Для каждого можно переопределить следующий вопрос</span></div>
+                          {draft.options.map((option, optionIndex) => (
+                            <div className="question-option-row" key={option.id}>
+                              <span>{optionIndex + 1}</span>
+                              <input placeholder="Название варианта" value={option.label} onChange={(event) => updateQuestionOption(draft, option.id, { label: event.target.value })} />
+                              <select value={option.next_question_code ?? ""} onChange={(event) => updateQuestionOption(draft, option.id, { next_question_code: event.target.value || null })}>
+                                <option value="">Как в «После ответа»</option>
+                                <option value="__end__">Завершить вопросы</option>
+                                {questions.filter((item) => item.code !== question.code).map((item) => <option key={item.code} value={item.code}>{questions.findIndex((candidate) => candidate.code === item.code) + 1}. {item.text}</option>)}
+                              </select>
+                              <button className="icon-button danger-icon" onClick={() => removeQuestionOption(draft, option.id)} title="Удалить вариант" aria-label="Удалить вариант"><Trash2 size={16} /></button>
+                            </div>
+                          ))}
+                          <button className="add-option-button" onClick={() => addQuestionOption(draft)} disabled={draft.options.length >= 20}><Plus size={16} /> Добавить вариант</button>
+                        </div>
+                      )}
                     </article>
                   );
                 })}
