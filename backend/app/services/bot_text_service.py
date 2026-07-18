@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+from html.parser import HTMLParser
+import logging
 from string import Formatter
 
 from sqlalchemy import select
@@ -6,6 +8,58 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import BotTextSetting
 from app.db.session import SessionLocal
+
+
+logger = logging.getLogger(__name__)
+
+TELEGRAM_HTML_TAGS = {
+    "a",
+    "b",
+    "blockquote",
+    "code",
+    "del",
+    "em",
+    "i",
+    "ins",
+    "pre",
+    "s",
+    "span",
+    "strike",
+    "strong",
+    "tg-emoji",
+    "tg-spoiler",
+    "u",
+}
+
+
+class TelegramHTMLValidator(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.open_tags: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        del attrs
+        if tag not in TELEGRAM_HTML_TAGS:
+            raise ValueError(f"Неподдерживаемый HTML-тег: <{tag}>")
+        self.open_tags.append(tag)
+
+    def handle_endtag(self, tag: str) -> None:
+        if not self.open_tags or self.open_tags[-1] != tag:
+            raise ValueError(f"Нарушен порядок закрытия HTML-тега: </{tag}>")
+        self.open_tags.pop()
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        del attrs
+        raise ValueError(f"Самозакрывающийся HTML-тег не поддерживается: <{tag}/>")
+
+    def validate(self, text: str) -> None:
+        try:
+            self.feed(text)
+            self.close()
+        except (ValueError, AssertionError) as exc:
+            raise ValueError(str(exc) or "Некорректная HTML-разметка") from exc
+        if self.open_tags:
+            raise ValueError(f"Не закрыт HTML-тег: <{self.open_tags[-1]}>")
 
 
 @dataclass(frozen=True)
@@ -319,6 +373,8 @@ def validate_bot_text(key: str, text: str) -> None:
     if len(text) > 4096:
         raise ValueError("Текст не должен превышать 4096 символов")
 
+    TelegramHTMLValidator().validate(text)
+
     variables: set[str] = set()
     try:
         for _, field_name, _, _ in Formatter().parse(text):
@@ -344,6 +400,11 @@ async def get_bot_text_value(session: AsyncSession, key: str) -> str:
 async def render_bot_text(key: str, **values: object) -> str:
     async with SessionLocal() as session:
         template = await get_bot_text_value(session, key)
+    try:
+        validate_bot_text(key, template)
+    except ValueError:
+        logger.exception("Invalid bot text override for %s; using default", key)
+        template = BOT_TEXTS_BY_KEY[key].default
     return template.format(**values)
 
 
