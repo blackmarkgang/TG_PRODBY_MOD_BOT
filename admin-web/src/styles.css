@@ -145,6 +145,47 @@ a:focus-visible {
   background: #111111;
 }
 
+.application-filter-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 18px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+}
+
+.application-filter-tabs button {
+  min-height: 42px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  border-color: #292929;
+  background: #111111;
+  color: #a0a0a0;
+  white-space: nowrap;
+}
+
+.application-filter-tabs button.active {
+  border-color: #63ff66;
+  background: #151b15;
+  color: #ffffff;
+}
+
+.application-filter-tabs em {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #3a3a3a;
+  border-radius: 11px;
+  color: #63ff66;
+  font-size: 12px;
+  font-style: normal;
+}
+
 .error {
   border-left-color: #ff6b6b;
 }

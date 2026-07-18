@@ -175,6 +175,16 @@ type StaffUser = {
 type Tab = "applications" | "participants" | "settings" | "bot" | "logs";
 type SettingsSection = "topics" | "roles" | "questions" | "access";
 type PreviewKind = "audio" | "video" | "image" | "pdf" | null;
+type ApplicationFilter = "all" | "listener" | "musician" | "creative" | "approved" | "rejected";
+
+const applicationFilters: { id: ApplicationFilter; label: string }[] = [
+  { id: "all", label: "Все" },
+  { id: "listener", label: "Слушатель" },
+  { id: "musician", label: "Музыкант" },
+  { id: "creative", label: "Креативный продакшн" },
+  { id: "approved", label: "Одобренные" },
+  { id: "rejected", label: "Отклонённые" },
+];
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 const devAdminId = import.meta.env.VITE_DEV_ADMIN_ID ?? "";
@@ -317,8 +327,33 @@ function newQuestionOption(): QuestionOption {
   };
 }
 
+function getApplicationDirection(application: Application): "listener" | "musician" | "creative" | null {
+  const direction = (application.answers.role_details ?? "").toLocaleLowerCase("ru-RU");
+  if (
+    direction.includes("креатив")
+    || direction.includes("дизайн")
+    || direction.includes("монтаж")
+    || direction.includes("видео")
+  ) return "creative";
+  if (direction.includes("слушател")) return "listener";
+  if (
+    direction.includes("музыкант")
+    || direction.includes("артист")
+    || direction.includes("битмейкер")
+    || direction.includes("продюсер")
+  ) return "musician";
+  return null;
+}
+
+function applicationMatchesFilter(application: Application, filter: ApplicationFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "approved" || filter === "rejected") return application.status === filter;
+  return application.status === "pending" && getApplicationDirection(application) === filter;
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>("applications");
+  const [applicationFilter, setApplicationFilter] = useState<ApplicationFilter>("all");
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("topics");
   const [applications, setApplications] = useState<Application[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -371,6 +406,16 @@ function App() {
         .includes(query)
     ));
   }, [participantSearch, participants]);
+  const applicationFilterCounts = useMemo(() => Object.fromEntries(
+    applicationFilters.map((filter) => [
+      filter.id,
+      applications.filter((application) => applicationMatchesFilter(application, filter.id)).length,
+    ]),
+  ) as Record<ApplicationFilter, number>, [applications]);
+  const filteredApplications = useMemo(
+    () => applications.filter((application) => applicationMatchesFilter(application, applicationFilter)),
+    [applicationFilter, applications],
+  );
 
   useEffect(() => {
     window.Telegram?.WebApp?.ready();
@@ -1088,12 +1133,26 @@ function App() {
       {activeTab === "applications" && (
         <section className="section-content">
           <div className="section-heading">
-            <div><h2>Заявки</h2><p>Рассмотрение кандидатов и назначение ролей</p></div>
-            <span className="count">{applications.length}</span>
+            <div><h2>Заявки</h2><p>Рассмотрение кандидатов</p></div>
+            <span className="count">{filteredApplications.length}</span>
+          </div>
+          <div className="application-filter-tabs" role="tablist" aria-label="Фильтр заявок">
+            {applicationFilters.map((filter) => (
+              <button
+                className={applicationFilter === filter.id ? "active" : ""}
+                key={filter.id}
+                onClick={() => setApplicationFilter(filter.id)}
+                role="tab"
+                aria-selected={applicationFilter === filter.id}
+              >
+                <span>{filter.label}</span>
+                <em>{applicationFilterCounts[filter.id]}</em>
+              </button>
+            ))}
           </div>
           <div className="applications-grid">
-            {applications.length === 0 && <div className="empty">Заявок пока нет.</div>}
-            {applications.map((item) => (
+            {filteredApplications.length === 0 && <div className="empty">В этой вкладке заявок нет.</div>}
+            {filteredApplications.map((item) => (
               <article className="application-card" key={item.id}>
                 <div className="card-head">
                   <div><strong>Заявка №{item.id}</strong><span>{formatDate(item.created_at)}</span></div>

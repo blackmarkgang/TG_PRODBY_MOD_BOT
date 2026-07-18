@@ -18,26 +18,49 @@ DEFAULT_COMMUNITY_ROLES = [
     ("other", "Другое"),
 ]
 
+DEFAULT_DIRECTION_OPTIONS = [
+    {"id": "listener", "label": "Слушатель", "next_question_code": "motivation"},
+    {"id": "musician", "label": "Музыкант", "next_question_code": "expectations"},
+    {
+        "id": "creative_prod",
+        "label": "Креативный продакшн (видео, дизайн, монтаж)",
+        "next_question_code": "expectations",
+    },
+]
+
 DEFAULT_QUESTIONS = [
-    ("age", "Сколько вам лет?", "Отправьте возраст одним числом.", "number"),
+    ("age", "Сколько вам лет?", "Отправьте возраст одним числом.", "number", None, []),
     (
         "role_details",
         "Расскажите о себе",
-        "Чем вы занимаетесь в музыке или смежных направлениях? Чем полезны сообществу?",
-        "text",
+        "Выберите основное направление.",
+        "single_choice",
+        None,
+        DEFAULT_DIRECTION_OPTIONS,
     ),
-    ("motivation", "Почему вы хотите попасть в Prod.by?", "Напишите коротко и своими словами.", "text"),
+    (
+        "motivation",
+        "Почему вы хотите попасть в Prod.by?",
+        "Напишите коротко и своими словами.",
+        "text",
+        "__end__",
+        [],
+    ),
     (
         "expectations",
         "Что вы ожидаете от участия?",
         "Расскажите, что хотите получить от сообщества и чем готовы делиться.",
         "text",
+        None,
+        [],
     ),
     (
         "portfolio",
         "Добавьте примеры работ",
         None,
         "file",
+        None,
+        [],
     ),
 ]
 
@@ -55,13 +78,18 @@ async def seed_defaults(session: AsyncSession) -> None:
 
     questions_result = await session.execute(select(ApplicationQuestion.id).limit(1))
     if questions_result.scalar_one_or_none() is None:
-        for index, (code, text, help_text, answer_type) in enumerate(DEFAULT_QUESTIONS, start=1):
+        for index, (code, text, help_text, answer_type, next_code, options) in enumerate(
+            DEFAULT_QUESTIONS,
+            start=1,
+        ):
             session.add(
                 ApplicationQuestion(
                     code=code,
                     text=text,
                     help_text=help_text,
                     answer_type=answer_type,
+                    options_json=options,
+                    next_question_code=next_code,
                     sort_order=index,
                 )
             )
