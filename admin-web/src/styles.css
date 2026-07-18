@@ -712,10 +712,6 @@ textarea {
   grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
 }
 
-.application-role-options {
-  margin-bottom: 4px;
-}
-
 .check-box {
   width: 20px;
   height: 20px;

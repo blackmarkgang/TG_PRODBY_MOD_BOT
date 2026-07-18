@@ -354,7 +354,6 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [comments, setComments] = useState<Record<number, string>>({});
-  const [applicationRoles, setApplicationRoles] = useState<Record<number, string[]>>({});
   const [previewUrls, setPreviewUrls] = useState<Record<number, string>>({});
   const [loadingPreviews, setLoadingPreviews] = useState<Set<number>>(new Set());
   const previewUrlsRef = useRef<Record<number, string>>({});
@@ -416,9 +415,6 @@ function App() {
       setRoles(loadedRoles);
       setRoleTitleDrafts(Object.fromEntries(
         loadedRoles.filter((role) => role.id !== undefined).map((role) => [role.id!, role.title]),
-      ));
-      setApplicationRoles(Object.fromEntries(
-        loadedApplications.map((application) => [application.id, application.roles.map((role) => role.code)]),
       ));
       setParticipantRoleDrafts(Object.fromEntries(
         loadedParticipants.map((participant) => [participant.id, participant.roles.map((role) => role.code)]),
@@ -488,13 +484,12 @@ function App() {
   async function review(id: number, action: "approve" | "reject") {
     setError(null);
     setFeedback(null);
-    const selectedRoles = applicationRoles[id] ?? [];
     const response = await fetch(`${apiBaseUrl}/applications/${id}/${action}`, {
       method: "POST",
       headers: { ...authHeaders(initData), "Content-Type": "application/json" },
       body: JSON.stringify({
         comment: comments[id]?.trim() || null,
-        role_codes: action === "approve" ? selectedRoles : [],
+        role_codes: [],
       }),
     });
     if (!response.ok) {
@@ -555,15 +550,6 @@ function App() {
           ? "Уведомление и новая персональная ссылка отправлены."
           : "Уведомление отправлено повторно."),
     );
-  }
-
-  function toggleApplicationRole(applicationId: number, roleCode: string) {
-    setApplicationRoles((current) => {
-      const selected = new Set(current[applicationId] ?? []);
-      if (selected.has(roleCode)) selected.delete(roleCode);
-      else selected.add(roleCode);
-      return { ...current, [applicationId]: Array.from(selected) };
-    });
   }
 
   function toggleParticipantRole(participantId: number, roleCode: string) {
@@ -1167,19 +1153,6 @@ function App() {
 
                 {item.status === "pending" ? (
                   <div className="review-block">
-                    <label>Роли после одобрения (необязательно)</label>
-                    <div className="role-choice-grid application-role-options">
-                      {roles.map((role) => {
-                        const checked = (applicationRoles[item.id] ?? []).includes(role.code);
-                        return (
-                          <label className={checked ? "selected" : ""} key={role.code}>
-                            <input type="checkbox" checked={checked} onChange={() => toggleApplicationRole(item.id, role.code)} />
-                            <span className="check-box">{checked && <Check size={15} />}</span>
-                            <span>{role.title}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
                     <label htmlFor={`comment-${item.id}`}>Комментарий пользователю (необязательно)</label>
                     <textarea id={`comment-${item.id}`} value={comments[item.id] ?? ""} onChange={(event) => setComments((current) => ({ ...current, [item.id]: event.target.value }))} rows={3} />
                     <div className="actions">

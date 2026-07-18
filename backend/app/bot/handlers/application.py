@@ -1,4 +1,3 @@
-import re
 from html import escape
 
 from aiogram import F, Router
@@ -28,7 +27,6 @@ from app.services.bot_text_service import render_bot_text
 
 router = Router()
 
-URL_PATTERN = re.compile(r"https?://[^\s]+", re.IGNORECASE)
 MAX_ATTACHMENTS = 10
 
 
@@ -403,19 +401,6 @@ def extract_file_items(message: Message) -> list[dict]:
             "file_size": photo.file_size,
             "caption": caption,
         }]
-    if message.text:
-        return [
-            {
-                "telegram_file_id": None,
-                "file_type": "url",
-                "file_name": None,
-                "mime_type": None,
-                "file_size": None,
-                "url": url.rstrip(".,);]"),
-                "caption": None,
-            }
-            for url in URL_PATTERN.findall(message.text)
-        ]
     return []
 
 
