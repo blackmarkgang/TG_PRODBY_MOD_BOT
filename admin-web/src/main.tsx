@@ -99,7 +99,7 @@ type Question = {
   code: string;
   text: string;
   help_text: string | null;
-  answer_type: "text" | "number" | "single_choice";
+  answer_type: "text" | "number" | "single_choice" | "file";
   options: QuestionOption[];
   next_question_code: string | null;
   sort_order: number;
@@ -342,7 +342,7 @@ function App() {
   const [newRoleTitle, setNewRoleTitle] = useState("");
   const [newQuestionText, setNewQuestionText] = useState("");
   const [newQuestionHelp, setNewQuestionHelp] = useState("");
-  const [newQuestionType, setNewQuestionType] = useState<"text" | "number" | "single_choice">("text");
+  const [newQuestionType, setNewQuestionType] = useState<Question["answer_type"]>("text");
   const [selectedTopicId, setSelectedTopicId] = useState<number | null>(null);
   const [topicRoleDrafts, setTopicRoleDrafts] = useState<Record<number, string[]>>({});
   const [topicTitleDrafts, setTopicTitleDrafts] = useState<Record<number, string>>({});
@@ -1359,7 +1359,7 @@ function App() {
               <div className="question-create">
                 <input placeholder="Текст нового вопроса" value={newQuestionText} onChange={(event) => setNewQuestionText(event.target.value)} />
                 <input placeholder="Подсказка пользователю (необязательно)" value={newQuestionHelp} onChange={(event) => setNewQuestionHelp(event.target.value)} />
-                <select value={newQuestionType} onChange={(event) => setNewQuestionType(event.target.value as Question["answer_type"])}><option value="text">Текст</option><option value="number">Число</option><option value="single_choice">Один вариант</option></select>
+                <select value={newQuestionType} onChange={(event) => setNewQuestionType(event.target.value as Question["answer_type"])}><option value="text">Текст</option><option value="number">Число</option><option value="single_choice">Один вариант</option><option value="file">Файл</option></select>
                 <button onClick={createQuestion}><Plus size={17} /> Добавить</button>
               </div>
               <div className="question-list">
@@ -1373,7 +1373,7 @@ function App() {
                           <input value={draft.text} onChange={(event) => setQuestionDrafts((current) => ({ ...current, [question.id]: { ...draft, text: event.target.value } }))} />
                           <input placeholder="Подсказка" value={draft.help_text ?? ""} onChange={(event) => setQuestionDrafts((current) => ({ ...current, [question.id]: { ...draft, help_text: event.target.value } }))} />
                         </div>
-                        <select value={draft.answer_type} onChange={(event) => changeQuestionType(draft, event.target.value as Question["answer_type"])}><option value="text">Текст</option><option value="number">Число</option><option value="single_choice">Один вариант</option></select>
+                        <select value={draft.answer_type} onChange={(event) => changeQuestionType(draft, event.target.value as Question["answer_type"])}><option value="text">Текст</option><option value="number">Число</option><option value="single_choice">Один вариант</option><option value="file">Файл</option></select>
                         <div className="config-actions"><button className="icon-button" onClick={() => saveQuestion(question.id)} title="Сохранить вопрос"><Save size={17} /></button><button className="icon-button danger-icon" onClick={() => deleteQuestion(question)} title="Удалить вопрос"><Trash2 size={17} /></button></div>
                       </div>
                       <div className="question-transition">

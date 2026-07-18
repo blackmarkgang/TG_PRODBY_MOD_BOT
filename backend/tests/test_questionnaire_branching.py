@@ -1,7 +1,7 @@
 import pytest
 from fastapi import HTTPException
 
-from app.api.routes.configuration import validate_question_graph_data
+from app.api.routes.configuration import QuestionPayload, validate_question_graph_data
 from app.bot.handlers.application import resolve_next_question_index
 from app.db.models import ApplicationQuestion
 
@@ -54,3 +54,9 @@ def test_question_graph_rejects_cycle() -> None:
 
     with pytest.raises(HTTPException, match="цикл"):
         validate_question_graph_data(questions)
+
+
+def test_file_question_type_is_supported() -> None:
+    payload = QuestionPayload(text="Прикрепите работы", answer_type="file")
+
+    assert payload.answer_type == "file"

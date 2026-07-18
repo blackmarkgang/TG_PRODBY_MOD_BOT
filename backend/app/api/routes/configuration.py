@@ -86,8 +86,8 @@ class QuestionPayload(BaseModel):
     @field_validator("answer_type")
     @classmethod
     def validate_answer_type(cls, value: str) -> str:
-        if value not in {"text", "number", "single_choice"}:
-            raise ValueError("Поддерживаются типы text, number и single_choice")
+        if value not in {"text", "number", "single_choice", "file"}:
+            raise ValueError("Поддерживаются типы text, number, single_choice и file")
         return value
 
     @field_validator("next_question_code")

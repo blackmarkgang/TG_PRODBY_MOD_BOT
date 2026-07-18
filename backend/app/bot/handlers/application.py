@@ -102,10 +102,9 @@ async def begin_application(message: Message, state: FSMContext, telegram_id: in
         visited_question_codes=[],
     )
     if questions:
-        await state.set_state(ApplicationForm.question)
         await show_question(message, state)
     else:
-        await show_portfolio_step(message, state)
+        await submit_application(message, state)
 
 
 async def show_question(message: Message, state: FSMContext) -> None:
@@ -114,6 +113,10 @@ async def show_question(message: Message, state: FSMContext) -> None:
     index = data["question_index"]
     question = questions[index]
     current_step = len(data.get("visited_question_codes", [])) + 1
+    if question["answer_type"] == "file":
+        await show_file_question(message, state)
+        return
+    await state.set_state(ApplicationForm.question)
     if question.get("help_text"):
         body = escape(question["help_text"])
     elif question["answer_type"] == "single_choice":
@@ -136,7 +139,7 @@ async def show_question(message: Message, state: FSMContext) -> None:
             question=escape(question["text"]),
             help_text=body,
             step=current_step,
-            total=len(questions) + 1,
+            total=len(questions),
         ),
         reply_markup=reply_markup,
     )
@@ -233,7 +236,7 @@ async def save_answer_and_advance(
     if next_index < len(questions):
         await show_question(message, state)
     else:
-        await show_portfolio_step(message, state)
+        await submit_application(message, state)
 
 
 def resolve_next_question_index(
@@ -251,17 +254,23 @@ def resolve_next_question_index(
     return current_index + 1
 
 
-async def show_portfolio_step(message: Message, state: FSMContext) -> None:
+async def show_file_question(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
-    questions = data.get("questions", [])
-    answered_questions = len(data.get("question_answers", {}))
-    await state.set_state(ApplicationForm.portfolio)
+    questions = data["questions"]
+    question = questions[data["question_index"]]
+    current_step = len(data.get("visited_question_codes", [])) + 1
+    files = list(data.get("files", []))
+    await state.update_data(file_question_start_count=len(files))
+    await state.set_state(ApplicationForm.file_upload)
+    help_text = escape(question["help_text"]) if question.get("help_text") else ""
     await answer_form(
         message,
         await render_bot_text(
             "portfolio_prompt",
-            step=answered_questions + 1,
-            total=len(questions) + 1,
+            question=escape(question["text"]),
+            help_text=help_text,
+            step=current_step,
+            total=len(questions),
             max_attachments=MAX_ATTACHMENTS,
         ),
         reply_markup=portfolio_keyboard(has_attachments=False),
@@ -269,18 +278,23 @@ async def show_portfolio_step(message: Message, state: FSMContext) -> None:
 
 
 @router.message(
-    ApplicationForm.portfolio,
+    ApplicationForm.file_upload,
     F.text.in_({"Готово", "✅ Готово", "Пропустить вложения", "⏭ Пропустить вложения"}),
 )
-async def finish_portfolio(message: Message, state: FSMContext) -> None:
-    await submit_application(message, state)
+async def finish_file_question(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    added_count = len(data.get("files", [])) - data.get("file_question_start_count", 0)
+    answer = f"Добавлено вложений: {added_count}" if added_count else "Пропущено"
+    await save_answer_and_advance(message, state, answer)
 
 
-@router.message(ApplicationForm.portfolio)
-async def receive_portfolio_item(message: Message, state: FSMContext) -> None:
+@router.message(ApplicationForm.file_upload)
+async def receive_file_item(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     files = list(data.get("files", []))
-    if len(files) >= MAX_ATTACHMENTS:
+    start_count = data.get("file_question_start_count", 0)
+    current_count = len(files) - start_count
+    if current_count >= MAX_ATTACHMENTS:
         await answer_form(
             message,
             await render_bot_text("attachment_limit", max_attachments=MAX_ATTACHMENTS),
@@ -293,7 +307,7 @@ async def receive_portfolio_item(message: Message, state: FSMContext) -> None:
         await answer_form(
             message,
             await render_bot_text("attachment_unrecognized"),
-            reply_markup=portfolio_keyboard(has_attachments=bool(files)),
+            reply_markup=portfolio_keyboard(has_attachments=current_count > 0),
         )
         return
 
@@ -306,7 +320,7 @@ async def receive_portfolio_item(message: Message, state: FSMContext) -> None:
                 await answer_form(
                     message,
                     await render_bot_text("attachment_check_failed"),
-                    reply_markup=portfolio_keyboard(has_attachments=bool(files)),
+                    reply_markup=portfolio_keyboard(has_attachments=current_count > 0),
                 )
                 return
     oversized_item = next(
@@ -322,18 +336,19 @@ async def receive_portfolio_item(message: Message, state: FSMContext) -> None:
         await answer_form(
             message,
             await render_bot_text("attachment_too_large"),
-            reply_markup=portfolio_keyboard(has_attachments=bool(files)),
+            reply_markup=portfolio_keyboard(has_attachments=current_count > 0),
         )
         return
 
-    available = MAX_ATTACHMENTS - len(files)
+    available = MAX_ATTACHMENTS - current_count
     files.extend(items[:available])
+    current_count = len(files) - start_count
     await state.update_data(files=files)
     await answer_form(
         message,
         await render_bot_text(
             "attachment_added",
-            count=len(files),
+            count=current_count,
             max_attachments=MAX_ATTACHMENTS,
         ),
         reply_markup=portfolio_keyboard(has_attachments=True),
