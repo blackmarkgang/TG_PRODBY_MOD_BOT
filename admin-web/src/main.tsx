@@ -175,12 +175,13 @@ type StaffUser = {
 type Tab = "applications" | "participants" | "settings" | "bot" | "logs";
 type SettingsSection = "topics" | "roles" | "questions" | "access";
 type PreviewKind = "audio" | "video" | "image" | "pdf" | null;
-type ApplicationFilter = "all" | "listener" | "musician" | "creative" | "approved" | "rejected";
+type ApplicationFilter = "all" | "listener" | "artist" | "beatmaker" | "creative" | "approved" | "rejected";
 
 const applicationFilters: { id: ApplicationFilter; label: string }[] = [
   { id: "all", label: "Все" },
   { id: "listener", label: "Слушатель" },
-  { id: "musician", label: "Музыкант" },
+  { id: "artist", label: "Артист" },
+  { id: "beatmaker", label: "Битмейкер" },
   { id: "creative", label: "Креативный продакшн" },
   { id: "approved", label: "Одобренные" },
   { id: "rejected", label: "Отклонённые" },
@@ -327,7 +328,7 @@ function newQuestionOption(): QuestionOption {
   };
 }
 
-function getApplicationDirection(application: Application): "listener" | "musician" | "creative" | null {
+function getApplicationDirection(application: Application): "listener" | "artist" | "beatmaker" | "creative" | null {
   const direction = (application.answers.role_details ?? "").toLocaleLowerCase("ru-RU");
   if (
     direction.includes("креатив")
@@ -336,12 +337,8 @@ function getApplicationDirection(application: Application): "listener" | "musici
     || direction.includes("видео")
   ) return "creative";
   if (direction.includes("слушател")) return "listener";
-  if (
-    direction.includes("музыкант")
-    || direction.includes("артист")
-    || direction.includes("битмейкер")
-    || direction.includes("продюсер")
-  ) return "musician";
+  if (direction.includes("артист")) return "artist";
+  if (direction.includes("битмейкер")) return "beatmaker";
   return null;
 }
 

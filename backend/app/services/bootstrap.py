@@ -20,7 +20,8 @@ DEFAULT_COMMUNITY_ROLES = [
 
 DEFAULT_DIRECTION_OPTIONS = [
     {"id": "listener", "label": "Слушатель", "next_question_code": "motivation"},
-    {"id": "musician", "label": "Музыкант", "next_question_code": "expectations"},
+    {"id": "artist", "label": "Артист", "next_question_code": "expectations"},
+    {"id": "beatmaker", "label": "Битмейкер", "next_question_code": "expectations"},
     {
         "id": "creative_prod",
         "label": "Креативный продакшн (видео, дизайн, монтаж)",
