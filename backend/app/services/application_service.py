@@ -35,6 +35,7 @@ async def get_or_create_user(session: AsyncSession, tg_user: TelegramUser) -> Us
         user.username = tg_user.username
         user.first_name = tg_user.first_name
         user.last_name = tg_user.last_name
+        user.has_used_bot = True
         return user
 
     user = User(
@@ -42,6 +43,7 @@ async def get_or_create_user(session: AsyncSession, tg_user: TelegramUser) -> Us
         username=tg_user.username,
         first_name=tg_user.first_name,
         last_name=tg_user.last_name,
+        has_used_bot=True,
     )
     session.add(user)
     await session.flush()
@@ -67,6 +69,7 @@ async def create_pending_application(
     user = await get_or_create_user(session, tg_user)
     if user.is_banned:
         raise UserBannedError("Доступ к подаче заявок заблокирован")
+    user.can_reapply = False
     await session.execute(select(User.id).where(User.id == user.id).with_for_update())
     active_application = await get_active_application(session, user.telegram_id)
     if active_application is not None:

@@ -27,7 +27,10 @@ async def main() -> None:
     if settings.telegram_group_id:
         try:
             administrators = await bot.get_chat_administrators(int(settings.telegram_group_id))
-            await track_telegram_users([member.user for member in administrators])
+            await track_telegram_users(
+                [member.user for member in administrators],
+                is_group_member=True,
+            )
         except Exception:
             logger.exception("Failed to sync Telegram group administrators")
     dp = Dispatcher()

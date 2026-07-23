@@ -53,6 +53,8 @@ async def list_participants(
             "last_name": user.last_name,
             "created_at": user.created_at,
             "is_banned": user.is_banned,
+            "is_group_member": user.is_group_member,
+            "has_used_bot": user.has_used_bot,
             "roles": roles_map.get(user.id, []),
             "latest_application_status": (
                 latest_applications[user.id].status if user.id in latest_applications else None

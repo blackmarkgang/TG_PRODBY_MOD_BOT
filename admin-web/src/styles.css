@@ -305,6 +305,12 @@ a:focus-visible {
   border-color: #ff6b6b;
 }
 
+.status.annulled,
+.participant-status.annulled {
+  color: #b5b5b5;
+  border-color: #666666;
+}
+
 .status.banned,
 .participant-status.banned {
   border-color: #ff4545;

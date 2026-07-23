@@ -15,6 +15,7 @@ DEFAULT_COMMUNITY_ROLES = [
     ("editor", "Монтажер"),
     ("operator", "Оператор"),
     ("organizer", "Организатор"),
+    ("creative_production", "Креативный продакшн"),
     ("other", "Другое"),
 ]
 

@@ -1,3 +1,8 @@
+from types import SimpleNamespace
+
+from aiogram.enums import ChatMemberStatus
+
+from app.bot.handlers.membership import is_active_chat_member
 from app.services.participant_tracking import is_configured_group
 
 
@@ -13,3 +18,14 @@ def test_configured_group_is_tracked(monkeypatch) -> None:
 
     assert is_configured_group(-100123, "supergroup")
     assert not is_configured_group(-100456, "supergroup")
+
+
+def test_chat_member_status_is_tracked() -> None:
+    assert is_active_chat_member(SimpleNamespace(status=ChatMemberStatus.MEMBER))
+    assert is_active_chat_member(
+        SimpleNamespace(status=ChatMemberStatus.RESTRICTED, is_member=True)
+    )
+    assert not is_active_chat_member(SimpleNamespace(status=ChatMemberStatus.LEFT))
+    assert not is_active_chat_member(
+        SimpleNamespace(status=ChatMemberStatus.RESTRICTED, is_member=False)
+    )

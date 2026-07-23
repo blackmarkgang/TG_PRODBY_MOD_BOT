@@ -29,10 +29,24 @@ from app.services.role_service import get_user_roles_map, set_user_roles
 
 router = APIRouter()
 
+DIRECTION_ROLE_CODES = {
+    "артист": "artist",
+    "битмейкер": "beatmaker",
+    "слушатель": "listener",
+    "креативный продакшн (видео, дизайн, монтаж)": "creative_production",
+}
+
 
 class ReviewPayload(BaseModel):
     comment: str | None = None
     role_codes: list[str] = Field(default_factory=list)
+
+
+def get_application_role_code(application: Application) -> str | None:
+    direction = str((application.answers_json or {}).get("role_details", "")).strip().casefold()
+    if direction.startswith("креативный продакшн"):
+        return "creative_production"
+    return DIRECTION_ROLE_CODES.get(direction)
 
 
 @router.get("")
@@ -158,8 +172,13 @@ async def approve_application(
         raise HTTPException(status_code=404, detail="Заявка не найдена")
     if application.status != "pending":
         raise HTTPException(status_code=409, detail="Заявка уже обработана")
+    role_code = get_application_role_code(application)
     try:
-        roles = await set_user_roles(session, application.user_id, payload.role_codes)
+        roles = await set_user_roles(
+            session,
+            application.user_id,
+            [role_code] if role_code else [],
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -173,7 +192,10 @@ async def approve_application(
             action="approve",
             entity_type="application",
             entity_id=application.id,
-            payload_json={"role_codes": [role.code for role in roles]},
+            payload_json={
+                "role_codes": [role.code for role in roles],
+                "direction": (application.answers_json or {}).get("role_details"),
+            },
         )
     )
     await session.commit()
@@ -182,6 +204,61 @@ async def approve_application(
         role_title=", ".join(role.title for role in roles),
     )
     return {"status": "approved", **delivery}
+
+
+@router.post("/{application_id}/annul")
+async def annul_application(
+    application_id: int,
+    admin: AdminUser = Depends(get_current_admin),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, bool | str | None]:
+    application = await get_application_with_user(session, application_id)
+    if application is None:
+        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    if application.status != "approved":
+        raise HTTPException(
+            status_code=409,
+            detail="Аннулировать можно только одобренную заявку",
+        )
+
+    application.status = "annulled"
+    application.user.can_reapply = True
+    await set_user_roles(session, application.user_id, [])
+    session.add(
+        AuditLog(
+            admin_id=admin.id,
+            action="annul_application",
+            entity_type="application",
+            entity_id=application.id,
+            payload_json={
+                "user_id": application.user_id,
+                "telegram_id": application.user.telegram_id,
+            },
+        )
+    )
+    await session.commit()
+
+    notification_sent = False
+    warning: str | None = None
+    bot = Bot(settings.bot_token)
+    try:
+        try:
+            await bot.send_message(
+                application.user.telegram_id,
+                await render_bot_text("application_annulled"),
+                parse_mode="HTML",
+            )
+            notification_sent = True
+        except TelegramAPIError:
+            warning = "Заявка аннулирована, но бот не смог уведомить пользователя."
+    finally:
+        await bot.session.close()
+
+    return {
+        "status": "annulled",
+        "notification_sent": notification_sent,
+        "warning": warning,
+    }
 
 
 @router.post("/{application_id}/reject")

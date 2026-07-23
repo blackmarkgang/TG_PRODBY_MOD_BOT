@@ -18,6 +18,15 @@ class User(Base):
     first_name: Mapped[str | None] = mapped_column(String(128))
     last_name: Mapped[str | None] = mapped_column(String(128))
     is_banned: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
+    is_group_member: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", nullable=False
+    )
+    has_used_bot: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", nullable=False
+    )
+    can_reapply: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", nullable=False
+    )
     banned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

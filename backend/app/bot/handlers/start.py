@@ -11,6 +11,7 @@ from app.db.session import SessionLocal
 from app.services.application_service import is_user_banned
 from app.services.community_access import (
     active_application_message,
+    can_user_reapply,
     get_active_application,
     is_group_member,
 )
@@ -29,16 +30,19 @@ async def start(message: Message) -> None:
                     parse_mode="HTML",
                 )
                 return
-            if await is_group_member(message.bot, telegram_id):
-                await message.answer(
-                    await render_bot_text("already_member"),
-                    parse_mode="HTML",
-                )
-                return
             active_application = await get_active_application(session, telegram_id)
             if active_application is not None:
                 await message.answer(
                     await active_application_message(active_application),
+                    parse_mode="HTML",
+                )
+                return
+            if (
+                await is_group_member(message.bot, telegram_id)
+                and not await can_user_reapply(session, telegram_id)
+            ):
+                await message.answer(
+                    await render_bot_text("already_member"),
                     parse_mode="HTML",
                 )
                 return

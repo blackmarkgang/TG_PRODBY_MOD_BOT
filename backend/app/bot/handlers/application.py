@@ -20,6 +20,7 @@ from app.services.application_service import (
 )
 from app.services.community_access import (
     active_application_message,
+    can_user_reapply,
     get_active_application,
     is_group_member,
 )
@@ -75,18 +76,21 @@ async def begin_application(message: Message, state: FSMContext, telegram_id: in
                     reply_markup=ReplyKeyboardRemove(),
                 )
                 return
-            if await is_group_member(message.bot, telegram_id):
-                await answer_form(
-                    message,
-                    await render_bot_text("already_member"),
-                    reply_markup=ReplyKeyboardRemove(),
-                )
-                return
             active_application = await get_active_application(session, telegram_id)
             if active_application is not None:
                 await answer_form(
                     message,
                     await active_application_message(active_application),
+                    reply_markup=ReplyKeyboardRemove(),
+                )
+                return
+            if (
+                await is_group_member(message.bot, telegram_id)
+                and not await can_user_reapply(session, telegram_id)
+            ):
+                await answer_form(
+                    message,
+                    await render_bot_text("already_member"),
                     reply_markup=ReplyKeyboardRemove(),
                 )
                 return

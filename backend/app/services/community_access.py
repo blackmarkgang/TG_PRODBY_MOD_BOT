@@ -30,6 +30,13 @@ async def get_active_application(
     return result.scalar_one_or_none()
 
 
+async def can_user_reapply(session: AsyncSession, telegram_id: int) -> bool:
+    result = await session.execute(
+        select(User.can_reapply).where(User.telegram_id == telegram_id)
+    )
+    return bool(result.scalar_one_or_none())
+
+
 async def is_group_member(bot: Bot, telegram_id: int) -> bool:
     if not settings.telegram_group_id:
         return False

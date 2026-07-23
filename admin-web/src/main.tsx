@@ -81,6 +81,8 @@ type Participant = {
   last_name: string | null;
   created_at: string;
   is_banned: boolean;
+  is_group_member: boolean;
+  has_used_bot: boolean;
   roles: Role[];
   latest_application_status: string | null;
 };
@@ -176,6 +178,7 @@ type Tab = "applications" | "participants" | "settings" | "bot" | "logs";
 type SettingsSection = "topics" | "roles" | "questions" | "access";
 type PreviewKind = "audio" | "video" | "image" | "pdf" | null;
 type ApplicationFilter = "all" | "listener" | "artist" | "beatmaker" | "creative" | "approved" | "rejected";
+type ParticipantSource = "group" | "bot";
 
 const applicationFilters: { id: ApplicationFilter; label: string }[] = [
   { id: "all", label: "Все" },
@@ -195,6 +198,7 @@ const statusLabels: Record<string, string> = {
   approved: "Одобрена",
   rejected: "Отклонена",
   banned: "Заблокирована",
+  annulled: "Аннулирована",
 };
 
 const participantStatusLabels: Record<string, string> = {
@@ -202,6 +206,7 @@ const participantStatusLabels: Record<string, string> = {
   approved: "Принят",
   rejected: "Отклонен",
   banned: "Заблокирован",
+  annulled: "Аннулирована",
 };
 
 const answerLabels: Record<string, string> = {
@@ -224,6 +229,7 @@ const fileTypeLabels: Record<string, string> = {
 
 const auditActionLabels: Record<string, string> = {
   approve: "Заявка одобрена",
+  annul_application: "Заявка аннулирована",
   reject: "Заявка отклонена",
   ban_user: "Пользователь заблокирован",
   application_submitted: "Заявка отправлена",
@@ -381,6 +387,7 @@ function App() {
   const [newTopicId, setNewTopicId] = useState("");
   const [newTopicTitle, setNewTopicTitle] = useState("");
   const [participantSearch, setParticipantSearch] = useState("");
+  const [participantSource, setParticipantSource] = useState<ParticipantSource>("group");
   const [editingParticipantId, setEditingParticipantId] = useState<number | null>(null);
   const [participantRoleDrafts, setParticipantRoleDrafts] = useState<Record<number, string[]>>({});
   const [error, setError] = useState<string | null>(null);
@@ -394,15 +401,25 @@ function App() {
   const initData = useMemo(() => window.Telegram?.WebApp?.initData ?? "", []);
   const filteredParticipants = useMemo(() => {
     const query = participantSearch.trim().toLocaleLowerCase("ru-RU").replace(/^@/, "");
-    if (!query) return participants;
-    return participants.filter((participant) => (
+    return participants.filter((participant) => {
+      const matchesSource = participantSource === "group"
+        ? participant.is_group_member
+        : participant.has_used_bot;
+      if (!matchesSource) return false;
+      if (!query) return true;
+      return (
       [participant.first_name, participant.last_name, participant.username, String(participant.telegram_id)]
         .filter(Boolean)
         .join(" ")
         .toLocaleLowerCase("ru-RU")
         .includes(query)
-    ));
-  }, [participantSearch, participants]);
+      );
+    });
+  }, [participantSearch, participantSource, participants]);
+  const participantSourceCounts = useMemo(() => ({
+    group: participants.filter((participant) => participant.is_group_member).length,
+    bot: participants.filter((participant) => participant.has_used_bot).length,
+  }), [participants]);
   const applicationFilterCounts = useMemo(() => Object.fromEntries(
     applicationFilters.map((filter) => [
       filter.id,
@@ -571,6 +588,25 @@ function App() {
     }
     const result = await response.json();
     setFeedback(result.warning ?? "Пользователь заблокирован.");
+    await loadAll();
+  }
+
+  async function annulApplication(id: number) {
+    if (!window.confirm("Аннулировать одобренную заявку? Выданные роли будут сняты, а пользователь сможет заполнить анкету заново.")) {
+      return;
+    }
+    setError(null);
+    setFeedback(null);
+    const response = await fetch(`${apiBaseUrl}/applications/${id}/annul`, {
+      method: "POST",
+      headers: authHeaders(initData),
+    });
+    if (!response.ok) {
+      setError(`Не удалось аннулировать заявку: ${await getApiError(response)}`);
+      return;
+    }
+    const result = await response.json();
+    setFeedback(result.warning ?? "Заявка аннулирована. Пользователь может заполнить анкету повторно.");
     await loadAll();
   }
 
@@ -1222,6 +1258,7 @@ function App() {
                     {item.admin_comment && <p><strong>Комментарий:</strong> {item.admin_comment}</p>}
                     <div className="actions">
                       {["approved", "rejected"].includes(item.status) && <button onClick={() => resendNotification(item.id)}>Отправить уведомление повторно</button>}
+                      {item.status === "approved" && <button className="reject" onClick={() => annulApplication(item.id)}>Аннулировать</button>}
                       {!item.user.is_banned && <button className="ban-button" onClick={() => banApplication(item.id)}><ShieldBan size={17} /> Забанить</button>}
                     </div>
                   </div>
@@ -1235,8 +1272,16 @@ function App() {
       {activeTab === "participants" && (
         <section className="section-content">
           <div className="section-heading">
-            <div><h2>Участники</h2><p>Все пользователи, сохранившиеся в базе</p></div>
+            <div><h2>Участники</h2><p>{participantSource === "group" ? "Пользователи, которых бот видел в группе" : "Пользователи, взаимодействовавшие с ботом"}</p></div>
             <span className="count">{filteredParticipants.length}</span>
+          </div>
+          <div className="application-filter-tabs participant-source-tabs" role="tablist" aria-label="Источник участников">
+            <button className={participantSource === "group" ? "active" : ""} onClick={() => setParticipantSource("group")} role="tab" aria-selected={participantSource === "group"}>
+              <span>Группа</span><em>{participantSourceCounts.group}</em>
+            </button>
+            <button className={participantSource === "bot" ? "active" : ""} onClick={() => setParticipantSource("bot")} role="tab" aria-selected={participantSource === "bot"}>
+              <span>Бот</span><em>{participantSourceCounts.bot}</em>
+            </button>
           </div>
           <label className="participant-search">
             <Search size={18} />
