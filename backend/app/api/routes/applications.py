@@ -1,3 +1,7 @@
+import base64
+import hashlib
+import hmac
+import time
 from datetime import datetime, timezone
 from html import escape
 from urllib.parse import quote
@@ -5,7 +9,7 @@ from urllib.parse import quote
 import httpx
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select, update
@@ -35,11 +39,123 @@ DIRECTION_ROLE_CODES = {
     "слушатель": "listener",
     "креативный продакшн (видео, дизайн, монтаж)": "creative_production",
 }
+PREVIEW_TOKEN_TTL_SECONDS = 3_600
 
 
 class ReviewPayload(BaseModel):
     comment: str | None = None
     role_codes: list[str] = Field(default_factory=list)
+
+
+def create_file_preview_token(
+    application_id: int,
+    file_id: int,
+    *,
+    expires_at: int | None = None,
+) -> str:
+    expiration = expires_at or int(time.time()) + PREVIEW_TOKEN_TTL_SECONDS
+    payload = f"{application_id}:{file_id}:{expiration}".encode()
+    signature = hmac.new(settings.bot_token.encode(), payload, hashlib.sha256).digest()
+    encoded_signature = base64.urlsafe_b64encode(signature).decode().rstrip("=")
+    return f"{expiration}.{encoded_signature}"
+
+
+def verify_file_preview_token(
+    token: str,
+    application_id: int,
+    file_id: int,
+    *,
+    now: int | None = None,
+) -> bool:
+    try:
+        expiration_text, _ = token.split(".", maxsplit=1)
+        expiration = int(expiration_text)
+    except (TypeError, ValueError):
+        return False
+    if expiration < (now or int(time.time())):
+        return False
+    expected_token = create_file_preview_token(
+        application_id,
+        file_id,
+        expires_at=expiration,
+    )
+    return hmac.compare_digest(token, expected_token)
+
+
+async def get_application_file(
+    session: AsyncSession,
+    application_id: int,
+    file_id: int,
+) -> ApplicationFile:
+    result = await session.execute(
+        select(ApplicationFile).where(
+            ApplicationFile.id == file_id,
+            ApplicationFile.application_id == application_id,
+        )
+    )
+    application_file = result.scalar_one_or_none()
+    if application_file is None or not application_file.telegram_file_id:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    return application_file
+
+
+async def stream_telegram_file(
+    application_file: ApplicationFile,
+    *,
+    range_header: str | None = None,
+    disposition: str,
+) -> StreamingResponse:
+    bot = Bot(settings.bot_token)
+    try:
+        telegram_file = await bot.get_file(application_file.telegram_file_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Telegram не вернул файл") from exc
+    finally:
+        await bot.session.close()
+
+    if not telegram_file.file_path:
+        raise HTTPException(status_code=502, detail="Telegram не вернул путь к файлу")
+
+    request_headers = {"Range": range_header} if range_header else {}
+    client = httpx.AsyncClient(timeout=60)
+    response = await client.send(
+        client.build_request(
+            "GET",
+            f"https://api.telegram.org/file/bot{settings.bot_token}/{telegram_file.file_path}",
+            headers=request_headers,
+        ),
+        stream=True,
+    )
+    if not response.is_success:
+        await response.aclose()
+        await client.aclose()
+        raise HTTPException(status_code=502, detail="Не удалось скачать файл из Telegram")
+
+    async def stream_file():
+        try:
+            async for chunk in response.aiter_bytes():
+                yield chunk
+        finally:
+            await response.aclose()
+            await client.aclose()
+
+    file_name = application_file.file_name or f"attachment-{application_file.id}"
+    headers = {
+        "Accept-Ranges": response.headers.get("accept-ranges", "bytes"),
+        "Cache-Control": "private, max-age=300",
+        "Content-Disposition": f"{disposition}; filename*=UTF-8''{quote(file_name)}",
+    }
+    for header_name in ("content-length", "content-range", "etag", "last-modified"):
+        if header_value := response.headers.get(header_name):
+            headers[header_name.title()] = header_value
+    return StreamingResponse(
+        stream_file(),
+        status_code=response.status_code,
+        media_type=application_file.mime_type
+        or response.headers.get("content-type")
+        or "application/octet-stream",
+        headers=headers,
+    )
 
 
 def get_application_role_code(application: Application) -> str | None:
@@ -109,54 +225,39 @@ async def download_application_file(
     _: AdminUser = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
-    result = await session.execute(
-        select(ApplicationFile).where(
-            ApplicationFile.id == file_id,
-            ApplicationFile.application_id == application_id,
-        )
+    application_file = await get_application_file(session, application_id, file_id)
+    return await stream_telegram_file(
+        application_file,
+        disposition="attachment",
     )
-    application_file = result.scalar_one_or_none()
-    if application_file is None or not application_file.telegram_file_id:
-        raise HTTPException(status_code=404, detail="Файл не найден")
 
-    bot = Bot(settings.bot_token)
-    try:
-        telegram_file = await bot.get_file(application_file.telegram_file_id)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="Telegram не вернул файл") from exc
-    finally:
-        await bot.session.close()
 
-    if not telegram_file.file_path:
-        raise HTTPException(status_code=502, detail="Telegram не вернул путь к файлу")
+@router.post("/{application_id}/files/{file_id}/preview-token")
+async def issue_application_file_preview_token(
+    application_id: int,
+    file_id: int,
+    _: AdminUser = Depends(get_current_admin),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    await get_application_file(session, application_id, file_id)
+    return {"token": create_file_preview_token(application_id, file_id)}
 
-    client = httpx.AsyncClient(timeout=60)
-    response = await client.send(
-        client.build_request(
-            "GET",
-            f"https://api.telegram.org/file/bot{settings.bot_token}/{telegram_file.file_path}",
-        ),
-        stream=True,
-    )
-    if not response.is_success:
-        await response.aclose()
-        await client.aclose()
-        raise HTTPException(status_code=502, detail="Не удалось скачать файл из Telegram")
 
-    async def stream_file():
-        try:
-            async for chunk in response.aiter_bytes():
-                yield chunk
-        finally:
-            await response.aclose()
-            await client.aclose()
-
-    file_name = application_file.file_name or f"attachment-{application_file.id}"
-    headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(file_name)}"}
-    return StreamingResponse(
-        stream_file(),
-        media_type=application_file.mime_type or "application/octet-stream",
-        headers=headers,
+@router.get("/{application_id}/files/{file_id}/preview")
+async def preview_application_file(
+    application_id: int,
+    file_id: int,
+    token: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    if not verify_file_preview_token(token, application_id, file_id):
+        raise HTTPException(status_code=403, detail="Ссылка предпросмотра недействительна")
+    application_file = await get_application_file(session, application_id, file_id)
+    return await stream_telegram_file(
+        application_file,
+        range_header=request.headers.get("range"),
+        disposition="inline",
     )
 
 

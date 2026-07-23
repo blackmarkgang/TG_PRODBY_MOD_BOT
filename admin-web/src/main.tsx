@@ -497,7 +497,9 @@ function App() {
     window.Telegram?.WebApp?.expand();
     void loadAll();
     return () => {
-      Object.values(previewUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
+      Object.values(previewUrlsRef.current)
+        .filter((url) => url.startsWith("blob:"))
+        .forEach((url) => URL.revokeObjectURL(url));
       if (botAvatarUrlRef.current) URL.revokeObjectURL(botAvatarUrlRef.current);
     };
   }, []);
@@ -1146,15 +1148,30 @@ function App() {
   }
 
   async function loadPreview(applicationId: number, file: ApplicationFile) {
-    if (previewUrls[file.id] || loadingPreviews.has(file.id)) return;
+    if (loadingPreviews.has(file.id)) return;
     setError(null);
+    setPreviewUrls((current) => {
+      const next = { ...current };
+      delete next[file.id];
+      return next;
+    });
     setLoadingPreviews((current) => new Set(current).add(file.id));
     try {
-      const blob = await fetchFile(applicationId, file);
-      if (!blob) return;
-      const objectUrl = URL.createObjectURL(blob);
-      previewUrlsRef.current[file.id] = objectUrl;
-      setPreviewUrls((current) => ({ ...current, [file.id]: objectUrl }));
+      const response = await fetch(
+        `${apiBaseUrl}/applications/${applicationId}/files/${file.id}/preview-token`,
+        {
+          method: "POST",
+          headers: authHeaders(initData),
+        },
+      );
+      if (!response.ok) {
+        setError(`Не удалось открыть вложение: ${await getApiError(response)}`);
+        return;
+      }
+      const payload: { token: string } = await response.json();
+      const previewUrl = `${apiBaseUrl}/applications/${applicationId}/files/${file.id}/preview?token=${encodeURIComponent(payload.token)}`;
+      previewUrlsRef.current[file.id] = previewUrl;
+      setPreviewUrls((current) => ({ ...current, [file.id]: previewUrl }));
     } finally {
       setLoadingPreviews((current) => {
         const next = new Set(current);
@@ -1176,7 +1193,7 @@ function App() {
     }
 
     setPreviewFile({ applicationId, file });
-    if (!file.url && !previewUrls[file.id]) void loadPreview(applicationId, file);
+    if (!file.url) void loadPreview(applicationId, file);
   }
 
   async function loadBotAvatar(avatarId: string | null) {
