@@ -8,6 +8,8 @@ import {
   Bot as BotIcon,
   Camera,
   Check,
+  ChevronDown,
+  ChevronUp,
   Download,
   ExternalLink,
   Eye,
@@ -416,6 +418,7 @@ function App() {
   const [applications, setApplications] = useState<Application[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [supportTickets, setSupportTickets] = useState<SupportTicket[]>([]);
+  const [expandedSupportTicketId, setExpandedSupportTicketId] = useState<number | null>(null);
   const [supportReplyDrafts, setSupportReplyDrafts] = useState<Record<number, string>>({});
   const [roles, setRoles] = useState<Role[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -1524,86 +1527,115 @@ function App() {
             <span className="count">{supportTickets.filter((ticket) => ticket.status !== "closed").length}</span>
           </div>
           <div className="support-list">
+            <div className="support-ticket-head-row">
+              <span>Тикет</span><span>Пользователь</span><span>Первоначальный вопрос</span><span>Ответственный</span><span>Статус</span><span></span>
+            </div>
             {supportTickets.map((ticket) => {
+              const expanded = expandedSupportTicketId === ticket.id;
               const isAssignedToCurrent = ticket.assigned_admin?.id === currentAdmin?.id;
               const userName = [ticket.user.first_name, ticket.user.last_name].filter(Boolean).join(" ") || "Без имени";
+              const userMeta = [
+                ticket.user.username ? `@${ticket.user.username}` : null,
+                `ID ${ticket.user.telegram_id}`,
+              ].filter(Boolean).join(" · ");
               const assigneeName = ticket.assigned_admin
                 ? [ticket.assigned_admin.first_name, ticket.assigned_admin.last_name].filter(Boolean).join(" ")
                   || (ticket.assigned_admin.username ? `@${ticket.assigned_admin.username}` : `ID ${ticket.assigned_admin.telegram_id}`)
                 : null;
+              const assigneeMeta = ticket.assigned_admin
+                ? [
+                    ticket.assigned_admin.username ? `@${ticket.assigned_admin.username}` : null,
+                    `ID ${ticket.assigned_admin.telegram_id}`,
+                  ].filter(Boolean).join(" · ")
+                : "Свободный тикет";
+              const initialQuestion = ticket.messages[0]?.text ?? "Без текста";
               return (
-                <article className="support-ticket" key={ticket.id}>
-                  <div className="support-ticket-head">
-                    <div>
-                      <strong>Тикет №{ticket.id}</strong>
-                      <span>{formatDate(ticket.created_at)}</span>
-                    </div>
+                <article className={`support-ticket ${expanded ? "expanded" : ""}`} key={ticket.id}>
+                  <button
+                    className="support-ticket-row"
+                    type="button"
+                    aria-expanded={expanded}
+                    onClick={() => setExpandedSupportTicketId((current) => current === ticket.id ? null : ticket.id)}
+                  >
+                    <span className="support-ticket-number">
+                      <strong>#{ticket.id}</strong>
+                      <span>{formatApplicationDate(ticket.created_at)}</span>
+                    </span>
+                    <span className="support-ticket-user">
+                      <strong>{userName}</strong>
+                      <span>{userMeta}</span>
+                    </span>
+                    <span className="support-ticket-question">
+                      <small>Первоначальный вопрос</small>
+                      <strong>{initialQuestion}</strong>
+                    </span>
+                    <span className={`support-ticket-assignee ${ticket.assigned_admin ? "" : "unassigned"}`}>
+                      <strong>{assigneeName ?? "Не назначен"}</strong>
+                      <span>{assigneeMeta}</span>
+                    </span>
                     <span className={`support-status ${ticket.status}`}>
                       {ticket.status === "open" ? "Новый" : ticket.status === "in_progress" ? "В работе" : "Закрыт"}
                     </span>
-                  </div>
-                  <div className="support-meta">
-                    <div>
-                      <strong>{userName}</strong>
-                      <span>{ticket.user.username ? `@${ticket.user.username}` : `ID ${ticket.user.telegram_id}`}</span>
-                    </div>
-                    <div>
-                      <span>Ответственный</span>
-                      <strong>{assigneeName ?? "Не назначен"}</strong>
-                    </div>
-                  </div>
-                  <div className="support-thread">
-                    {ticket.messages.map((message) => (
-                      <div className={`support-message ${message.sender_type}`} key={message.id}>
-                        <div>
-                          <strong>
-                            {message.sender_type === "user"
-                              ? userName
-                              : message.admin
-                                ? [message.admin.first_name, message.admin.last_name].filter(Boolean).join(" ")
-                                  || (message.admin.username ? `@${message.admin.username}` : "Администратор")
-                                : "Администратор"}
-                          </strong>
-                          <time>{formatLogDate(message.created_at)}</time>
-                        </div>
-                        <p>{message.text}</p>
+                    <span className="support-expand-icon">
+                      {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                    </span>
+                  </button>
+                  {expanded && (
+                    <div className="support-ticket-details">
+                      <div className="support-thread">
+                        {ticket.messages.map((message) => (
+                          <div className={`support-message ${message.sender_type}`} key={message.id}>
+                            <div>
+                              <strong>
+                                {message.sender_type === "user"
+                                  ? userName
+                                  : message.admin
+                                    ? [message.admin.first_name, message.admin.last_name].filter(Boolean).join(" ")
+                                      || (message.admin.username ? `@${message.admin.username}` : "Администратор")
+                                    : "Администратор"}
+                              </strong>
+                              <time>{formatLogDate(message.created_at)}</time>
+                            </div>
+                            <p>{message.text}</p>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                  <div className="support-actions">
-                    {ticket.status === "open" && !ticket.assigned_admin && (
-                      <button className="approve" onClick={() => updateSupportTicket(ticket.id, "claim")}>
-                        <UserCheck size={17} /> Взять тикет
-                      </button>
-                    )}
-                    {ticket.status !== "closed" && isAssignedToCurrent && (
-                      <>
-                        <div className="support-reply">
-                          <textarea
-                            rows={3}
-                            placeholder="Ответ пользователю"
-                            value={supportReplyDrafts[ticket.id] ?? ""}
-                            onChange={(event) => setSupportReplyDrafts((current) => ({
-                              ...current,
-                              [ticket.id]: event.target.value,
-                            }))}
-                          />
-                          <button className="approve" onClick={() => replyToSupportTicket(ticket.id)}>
-                            <Send size={17} /> Ответить пользователю
+                      <div className="support-actions">
+                        {ticket.status === "open" && !ticket.assigned_admin && (
+                          <button className="approve" onClick={() => updateSupportTicket(ticket.id, "claim")}>
+                            <UserCheck size={17} /> Взять тикет
                           </button>
-                        </div>
-                        <button onClick={() => updateSupportTicket(ticket.id, "release")}>
-                          <UserMinus size={17} /> Передать тикет
-                        </button>
-                        <button className="reject" onClick={() => updateSupportTicket(ticket.id, "close")}>
-                          <XCircle size={17} /> Закрыть тикет
-                        </button>
-                      </>
-                    )}
-                    {ticket.status !== "closed" && ticket.assigned_admin && !isAssignedToCurrent && (
-                      <span className="support-locked">Тикет находится в работе у другого сотрудника.</span>
-                    )}
-                  </div>
+                        )}
+                        {ticket.status !== "closed" && isAssignedToCurrent && (
+                          <>
+                            <div className="support-reply">
+                              <textarea
+                                rows={3}
+                                placeholder="Ответ пользователю"
+                                value={supportReplyDrafts[ticket.id] ?? ""}
+                                onChange={(event) => setSupportReplyDrafts((current) => ({
+                                  ...current,
+                                  [ticket.id]: event.target.value,
+                                }))}
+                              />
+                              <button className="approve" onClick={() => replyToSupportTicket(ticket.id)}>
+                                <Send size={17} /> Ответить
+                              </button>
+                            </div>
+                            <button onClick={() => updateSupportTicket(ticket.id, "release")}>
+                              <UserMinus size={17} /> Передать
+                            </button>
+                            <button className="reject" onClick={() => updateSupportTicket(ticket.id, "close")}>
+                              <XCircle size={17} /> Закрыть
+                            </button>
+                          </>
+                        )}
+                        {ticket.status !== "closed" && ticket.assigned_admin && !isAssignedToCurrent && (
+                          <span className="support-locked">Тикет находится в работе у другого сотрудника.</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </article>
               );
             })}
