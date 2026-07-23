@@ -215,11 +215,12 @@ type StaffUser = {
 type Tab = "applications" | "participants" | "support" | "settings" | "bot" | "logs";
 type SettingsSection = "topics" | "roles" | "questions" | "access";
 type PreviewKind = "audio" | "video" | "image" | "pdf" | null;
-type ApplicationFilter = "all" | "listener" | "artist" | "beatmaker" | "creative" | "approved" | "rejected";
+type ApplicationFilter = "all" | "pending" | "listener" | "artist" | "beatmaker" | "creative" | "approved" | "rejected";
 type ParticipantSource = "group" | "bot";
 
 const applicationFilters: { id: ApplicationFilter; label: string }[] = [
   { id: "all", label: "Все" },
+  { id: "pending", label: "На рассмотрении" },
   { id: "listener", label: "Слушатель" },
   { id: "artist", label: "Артист" },
   { id: "beatmaker", label: "Битмейкер" },
@@ -336,6 +337,65 @@ function formatDate(value: string): string {
   }).format(new Date(value));
 }
 
+function formatApplicationDate(value: string): string {
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value)).replace(",", "");
+}
+
+function getInitials(application: Application): string {
+  const initials = [application.user.first_name, application.user.last_name]
+    .filter(Boolean)
+    .map((part) => part![0])
+    .join("");
+  return initials.slice(0, 2).toLocaleUpperCase("ru-RU") || "TG";
+}
+
+function getApplicationDirectionTitle(application: Application): string {
+  return application.answers.role_details
+    || application.roles.map((role) => role.title).join(", ")
+    || "Без направления";
+}
+
+function formatFileCount(count: number): string {
+  const mod100 = count % 100;
+  const mod10 = count % 10;
+  if (mod100 >= 11 && mod100 <= 14) return `${count} файлов`;
+  if (mod10 === 1) return `${count} файл`;
+  if (mod10 >= 2 && mod10 <= 4) return `${count} файла`;
+  return `${count} файлов`;
+}
+
+function getApplicationSummary(application: Application): { label: string; value: string } {
+  if (getApplicationDirection(application) === "listener") {
+    const key = application.answers.motivation
+      ? "motivation"
+      : Object.keys(application.answers).find((item) => !["age", "role_details"].includes(item));
+    if (key) {
+      return {
+        label: application.answer_labels[key] ?? answerLabels[key] ?? "Ответ анкеты",
+        value: application.answers[key],
+      };
+    }
+  }
+  if (application.files.length > 0) {
+    return {
+      label: "Примеры работ",
+      value: `Прикреплено: ${formatFileCount(application.files.length)}`,
+    };
+  }
+  const key = Object.keys(application.answers).find((item) => !["age", "role_details"].includes(item));
+  return key
+    ? {
+        label: application.answer_labels[key] ?? answerLabels[key] ?? "Ответ анкеты",
+        value: application.answers[key],
+      }
+    : { label: "Ответ анкеты", value: "Дополнительных ответов нет" };
+}
+
 function formatLogDate(value: string): string {
   const date = new Date(value);
   const datePart = new Intl.DateTimeFormat("ru-RU", {
@@ -394,6 +454,7 @@ function getApplicationDirection(application: Application): "listener" | "artist
 
 function applicationMatchesFilter(application: Application, filter: ApplicationFilter): boolean {
   if (filter === "all") return true;
+  if (filter === "pending") return application.status === "pending";
   if (filter === "approved" || filter === "rejected") return application.status === filter;
   return application.status === "pending" && getApplicationDirection(application) === filter;
 }
@@ -401,6 +462,7 @@ function applicationMatchesFilter(application: Application, filter: ApplicationF
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>("applications");
   const [applicationFilter, setApplicationFilter] = useState<ApplicationFilter>("all");
+  const [expandedApplicationId, setExpandedApplicationId] = useState<number | null>(null);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("topics");
   const [applications, setApplications] = useState<Application[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -442,6 +504,7 @@ function App() {
   const [previewUrls, setPreviewUrls] = useState<Record<number, string>>({});
   const [loadingPreviews, setLoadingPreviews] = useState<Set<number>>(new Set());
   const previewUrlsRef = useRef<Record<number, string>>({});
+  const supportRequestIdRef = useRef(0);
   const botAvatarUrlRef = useRef<string | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const initData = useMemo(() => window.Telegram?.WebApp?.initData ?? "", []);
@@ -486,6 +549,32 @@ function App() {
       if (botAvatarUrlRef.current) URL.revokeObjectURL(botAvatarUrlRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (activeTab !== "support" || !currentAdmin) return;
+    const intervalId = window.setInterval(() => {
+      void loadSupportTickets(true);
+    }, 3000);
+    return () => window.clearInterval(intervalId);
+  }, [activeTab, currentAdmin, initData]);
+
+  async function loadSupportTickets(silent = false) {
+    const requestId = ++supportRequestIdRef.current;
+    try {
+      const response = await fetch(`${apiBaseUrl}/support`, {
+        headers: authHeaders(initData),
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        if (!silent) setError(`Не удалось обновить поддержку: ${await getApiError(response)}`);
+        return;
+      }
+      const tickets: SupportTicket[] = await response.json();
+      if (requestId === supportRequestIdRef.current) setSupportTickets(tickets);
+    } catch {
+      if (!silent) setError("Не удалось обновить поддержку.");
+    }
+  }
 
   async function loadAll() {
     setError(null);
@@ -702,6 +791,7 @@ function App() {
       close: `Тикет №${id} закрыт.`,
     };
     setFeedback(result.warning ?? messages[action]);
+    await loadSupportTickets(true);
   }
 
   async function replyToSupportTicket(id: number) {
@@ -725,6 +815,7 @@ function App() {
     setSupportTickets((current) => current.map((item) => item.id === id ? result.ticket : item));
     setSupportReplyDrafts((current) => ({ ...current, [id]: "" }));
     setFeedback(result.warning ?? "Ответ отправлен пользователю.");
+    await loadSupportTickets(true);
   }
 
   function toggleParticipantRole(participantId: number, roleCode: string) {
@@ -1288,88 +1379,155 @@ function App() {
               </button>
             ))}
           </div>
-          <div className="applications-grid">
+          <div className="application-queue">
+            <div className="compact-application-head">
+              <span>Пользователь</span><span>Направление</span><span>Ответ анкеты</span><span>Вложения</span><span>Действия</span>
+            </div>
             {filteredApplications.length === 0 && <div className="empty">В этой вкладке заявок нет.</div>}
-            {filteredApplications.map((item) => (
-              <article className="application-card" key={item.id}>
-                <div className="card-head">
-                  <div><strong>Заявка №{item.id}</strong><span>{formatDate(item.created_at)}</span></div>
-                  <span className={`status ${item.status}`}>{statusLabels[item.status] ?? item.status}</span>
-                </div>
-                <div className="meta">
-                  <span>{item.user.first_name ?? "Без имени"}</span>
-                  <span>{item.user.username ? `@${item.user.username}` : `ID ${item.user.telegram_id}`}</span>
-                  <span>Возраст: {item.age ?? "не указан"}</span>
-                  {item.roles.length > 0 && <span>Роли: {item.roles.map((role) => role.title).join(", ")}</span>}
-                </div>
-                <dl>
-                  {Object.entries(item.answers).map(([key, value]) => (
-                    <React.Fragment key={key}><dt>{item.answer_labels[key] ?? answerLabels[key] ?? key}</dt><dd>{value}</dd></React.Fragment>
-                  ))}
-                </dl>
-
-                {item.files.length > 0 && (
-                  <div className="attachments">
-                    <h3>Вложения</h3>
-                    {item.files.map((file) => {
-                      const previewKind = getPreviewKind(file);
-                      const previewUrl = previewUrls[file.id];
-                      return (
-                        <div className="file-entry" key={file.id}>
-                          <div className="file-row">
-                            <div className="file-info">
-                              <strong>{file.file_name ?? fileTypeLabels[file.file_type] ?? "Вложение"}</strong>
-                              <span>{fileTypeLabels[file.file_type] ?? file.file_type}{file.file_size ? ` · ${formatFileSize(file.file_size)}` : ""}</span>
-                              {file.caption && <span>{file.caption}</span>}
-                            </div>
-                            <div className="file-actions">
-                              {file.url ? (
-                                <a className="icon-button" href={file.url} target="_blank" rel="noreferrer" title="Открыть ссылку"><ExternalLink size={18} /></a>
-                              ) : (
-                                <>
-                                  {previewKind && !previewUrl && (
-                                    <button className="icon-button" onClick={() => loadPreview(item.id, file)} title={previewKind === "audio" ? "Слушать" : "Смотреть"}>
-                                      {previewKind === "audio" ? <Play size={18} /> : <Eye size={18} />}
-                                    </button>
-                                  )}
-                                  <button className="icon-button" onClick={() => downloadFile(item.id, file)} title="Скачать"><Download size={18} /></button>
-                                </>
-                              )}
+            {filteredApplications.map((item) => {
+              const expanded = expandedApplicationId === item.id;
+              const summary = getApplicationSummary(item);
+              const displayName = [item.user.first_name, item.user.last_name].filter(Boolean).join(" ") || "Без имени";
+              return (
+                <React.Fragment key={item.id}>
+                  <div
+                    className={`compact-application-row ${expanded ? "expanded" : ""}`}
+                    onClick={() => setExpandedApplicationId((current) => current === item.id ? null : item.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setExpandedApplicationId((current) => current === item.id ? null : item.id);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={expanded}
+                  >
+                    <div className="compact-applicant">
+                      <span className="compact-avatar">{getInitials(item)}</span>
+                      <div><strong>{displayName}</strong><span>{item.user.username ? `@${item.user.username}` : `ID ${item.user.telegram_id}`} · заявка №{item.id} · {formatApplicationDate(item.created_at)}</span></div>
+                    </div>
+                    <div className="compact-direction">
+                      <span>{getApplicationDirectionTitle(item)}</span>
+                      <em>{item.age ? `${item.age} лет` : "Возраст не указан"}</em>
+                      {item.status !== "pending" && <small className={`compact-status ${item.status}`}>{statusLabels[item.status] ?? item.status}</small>}
+                    </div>
+                    <div className="compact-answer"><span>{summary.label}</span><strong>{summary.value}</strong></div>
+                    <div className="compact-files">
+                      <span>{item.files.length > 0 ? formatFileCount(item.files.length) : getApplicationDirection(item) === "listener" ? "Не требуются" : "Без файлов"}</span>
+                      <div>
+                        {item.files.slice(0, 3).map((file) => {
+                          const previewKind = getPreviewKind(file);
+                          return (
+                            <button
+                              className="compact-file-button"
+                              key={file.id}
+                              title={file.file_name ?? fileTypeLabels[file.file_type] ?? "Вложение"}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setExpandedApplicationId(item.id);
+                                if (previewKind && !previewUrls[file.id]) void loadPreview(item.id, file);
+                              }}
+                            >
+                              {previewKind === "audio" ? <Play size={12} /> : <Eye size={12} />}
+                            </button>
+                          );
+                        })}
+                        {item.files.length > 3 && <span className="compact-file-more">+{item.files.length - 3}</span>}
+                      </div>
+                    </div>
+                    <div className="compact-actions">
+                      {item.status === "pending" && (
+                        <>
+                          <button className="compact-action approve" title="Одобрить" onClick={(event) => { event.stopPropagation(); void review(item.id, "approve"); }}><Check size={15} /></button>
+                          <button className="compact-action reject" title="Отклонить" onClick={(event) => { event.stopPropagation(); void review(item.id, "reject"); }}><XCircle size={15} /></button>
+                          <button className="compact-action ban-button" title="Забанить" onClick={(event) => { event.stopPropagation(); void banApplication(item.id); }}><ShieldBan size={15} /></button>
+                        </>
+                      )}
+                      <button className="compact-action expand-action" title={expanded ? "Свернуть" : "Открыть заявку"} onClick={(event) => { event.stopPropagation(); setExpandedApplicationId(expanded ? null : item.id); }}>
+                        {expanded ? <ArrowUp size={15} /> : <ArrowDown size={15} />}
+                      </button>
+                    </div>
+                  </div>
+                  {expanded && (
+                    <div className="compact-application-details">
+                      <div className="compact-detail-content">
+                        <div className="compact-answer-grid">
+                          {Object.entries(item.answers)
+                            .filter(([key]) => !["age", "role_details"].includes(key))
+                            .map(([key, value]) => (
+                              <div className="compact-answer-item" key={key}>
+                                <span>{item.answer_labels[key] ?? answerLabels[key] ?? key}</span>
+                                <strong>{value}</strong>
+                              </div>
+                            ))}
+                        </div>
+                        {item.files.length > 0 && (
+                          <div className="compact-attachments">
+                            <div className="compact-detail-heading"><strong>Вложения</strong><span>{formatFileCount(item.files.length)} · {formatFileSize(item.files.reduce((total, file) => total + (file.file_size ?? 0), 0))}</span></div>
+                            <div className="compact-attachment-grid">
+                              {item.files.map((file) => {
+                                const previewKind = getPreviewKind(file);
+                                const previewUrl = previewUrls[file.id];
+                                return (
+                                  <div className="compact-file-entry" key={file.id}>
+                                    <div className="compact-file-row">
+                                      <div className="compact-file-kind">{previewKind === "audio" ? <Play size={14} /> : <FileText size={14} />}</div>
+                                      <div className="file-info">
+                                        <strong>{file.file_name ?? fileTypeLabels[file.file_type] ?? "Вложение"}</strong>
+                                        <span>{fileTypeLabels[file.file_type] ?? file.file_type}{file.file_size ? ` · ${formatFileSize(file.file_size)}` : ""}</span>
+                                      </div>
+                                      <div className="file-actions">
+                                        {file.url ? (
+                                          <a className="icon-button" href={file.url} target="_blank" rel="noreferrer" title="Открыть"><ExternalLink size={16} /></a>
+                                        ) : (
+                                          <>
+                                            {previewKind && !previewUrl && <button className="icon-button" onClick={() => loadPreview(item.id, file)} title={previewKind === "audio" ? "Слушать" : "Смотреть"}>{previewKind === "audio" ? <Play size={16} /> : <Eye size={16} />}</button>}
+                                            <button className="icon-button" onClick={() => downloadFile(item.id, file)} title="Скачать"><Download size={16} /></button>
+                                          </>
+                                        )}
+                                      </div>
+                                    </div>
+                                    {loadingPreviews.has(file.id) && <div className="loading-line">Загрузка предпросмотра...</div>}
+                                    {previewUrl && previewKind === "audio" && <audio className="media-preview" controls src={previewUrl} />}
+                                    {previewUrl && previewKind === "video" && <video className="media-preview" controls src={previewUrl} />}
+                                    {previewUrl && previewKind === "image" && <img className="image-preview" src={previewUrl} alt={file.file_name ?? "Вложение"} />}
+                                    {previewUrl && previewKind === "pdf" && <iframe className="pdf-preview" src={previewUrl} title={file.file_name ?? "PDF"} />}
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
-                          {loadingPreviews.has(file.id) && <div className="loading-line">Загрузка предпросмотра...</div>}
-                          {previewUrl && previewKind === "audio" && <audio className="media-preview" controls src={previewUrl} />}
-                          {previewUrl && previewKind === "video" && <video className="media-preview" controls src={previewUrl} />}
-                          {previewUrl && previewKind === "image" && <img className="image-preview" src={previewUrl} alt={file.file_name ?? "Вложение"} />}
-                          {previewUrl && previewKind === "pdf" && <iframe className="pdf-preview" src={previewUrl} title={file.file_name ?? "PDF"} />}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {item.status === "pending" ? (
-                  <div className="review-block">
-                    <label htmlFor={`comment-${item.id}`}>Комментарий пользователю (необязательно)</label>
-                    <textarea id={`comment-${item.id}`} value={comments[item.id] ?? ""} onChange={(event) => setComments((current) => ({ ...current, [item.id]: event.target.value }))} rows={3} />
-                    <div className="actions">
-                      <button className="approve" onClick={() => review(item.id, "approve")}>Одобрить</button>
-                      <button className="reject" onClick={() => review(item.id, "reject")}>Отклонить</button>
-                      <button className="ban-button" onClick={() => banApplication(item.id)}><ShieldBan size={17} /> Забанить</button>
+                        )}
+                      </div>
+                      <aside className="compact-review-panel">
+                        {item.status === "pending" ? (
+                          <>
+                            <label htmlFor={`comment-${item.id}`}>Комментарий пользователю</label>
+                            <textarea id={`comment-${item.id}`} value={comments[item.id] ?? ""} onChange={(event) => setComments((current) => ({ ...current, [item.id]: event.target.value }))} rows={3} placeholder="Необязательно" />
+                            <div className="actions">
+                              <button className="approve" onClick={() => review(item.id, "approve")}>Одобрить</button>
+                              <button className="reject" onClick={() => review(item.id, "reject")}>Отклонить</button>
+                              <button className="ban-button" onClick={() => banApplication(item.id)}>Забанить</button>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <span className={`status ${item.status}`}>{statusLabels[item.status] ?? item.status}</span>
+                            {item.admin_comment && <p><strong>Комментарий:</strong> {item.admin_comment}</p>}
+                            <div className="actions">
+                              {["approved", "rejected"].includes(item.status) && <button onClick={() => resendNotification(item.id)}>Повторить уведомление</button>}
+                              {item.status === "approved" && <button className="reject" onClick={() => annulApplication(item.id)}>Аннулировать</button>}
+                              {!item.user.is_banned && <button className="ban-button" onClick={() => banApplication(item.id)}>Забанить</button>}
+                            </div>
+                          </>
+                        )}
+                      </aside>
                     </div>
-                  </div>
-                ) : (
-                  <div className="review-result">
-                    {item.admin_comment && <p><strong>Комментарий:</strong> {item.admin_comment}</p>}
-                    <div className="actions">
-                      {["approved", "rejected"].includes(item.status) && <button onClick={() => resendNotification(item.id)}>Отправить уведомление повторно</button>}
-                      {item.status === "approved" && <button className="reject" onClick={() => annulApplication(item.id)}>Аннулировать</button>}
-                      {!item.user.is_banned && <button className="ban-button" onClick={() => banApplication(item.id)}><ShieldBan size={17} /> Забанить</button>}
-                    </div>
-                  </div>
-                )}
-              </article>
-            ))}
+                  )}
+                </React.Fragment>
+              );
+            })}
           </div>
         </section>
       )}

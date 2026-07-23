@@ -8,7 +8,7 @@ from aiogram.exceptions import TelegramAPIError
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, desc, select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -58,7 +58,7 @@ async def list_applications(
     query = (
         select(Application)
         .options(selectinload(Application.user), selectinload(Application.files))
-        .order_by(desc(Application.created_at))
+        .order_by(Application.created_at, Application.id)
     )
     if status:
         query = query.where(Application.status == status)
