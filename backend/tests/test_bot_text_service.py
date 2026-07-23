@@ -1,6 +1,11 @@
 import pytest
 
-from app.services.bot_text_service import TelegramHTMLValidator, validate_bot_text
+from app.services.bot_text_service import (
+    BRAND_URL,
+    TelegramHTMLValidator,
+    linkify_brand,
+    validate_bot_text,
+)
 
 
 def test_telegram_html_validator_accepts_balanced_supported_tags() -> None:
@@ -25,3 +30,13 @@ def test_telegram_html_validator_rejects_invalid_markup(text: str, message: str)
 def test_validate_bot_text_checks_html() -> None:
     with pytest.raises(ValueError, match="Не закрыт HTML-тег"):
         validate_bot_text("welcome", "<b>Привет")
+
+
+def test_linkify_brand_only_changes_text_nodes() -> None:
+    result = linkify_brand("<b>Добро пожаловать в Prod.by</b>")
+    assert result == f'<b>Добро пожаловать в <a href="{BRAND_URL}">Prod.by</a></b>'
+
+
+def test_linkify_brand_does_not_nest_existing_link() -> None:
+    source = '<a href="https://example.com">Prod.by</a>'
+    assert linkify_brand(source) == source

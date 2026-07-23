@@ -14,18 +14,23 @@ import {
   FileText,
   Hash,
   ListChecks,
+  MessageCircle,
   Plus,
   Play,
   RefreshCw,
   RotateCcw,
   Save,
   Search,
+  Send,
   Settings,
   ShieldBan,
   SlidersHorizontal,
   Trash2,
   UserCog,
+  UserCheck,
+  UserMinus,
   Users,
+  XCircle,
 } from "lucide-react";
 import "./styles.css";
 
@@ -163,6 +168,39 @@ type BotSettingsResponse = {
   messages: BotTextSetting[];
 };
 
+type SupportAdmin = {
+  id: number;
+  telegram_id: number;
+  username: string | null;
+  first_name: string | null;
+  last_name: string | null;
+};
+
+type SupportMessage = {
+  id: number;
+  sender_type: "user" | "admin";
+  text: string;
+  created_at: string;
+  admin: SupportAdmin | null;
+};
+
+type SupportTicket = {
+  id: number;
+  status: "open" | "in_progress" | "closed";
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+  user: {
+    id: number;
+    telegram_id: number;
+    username: string | null;
+    first_name: string | null;
+    last_name: string | null;
+  };
+  assigned_admin: SupportAdmin | null;
+  messages: SupportMessage[];
+};
+
 type StaffRole = "owner" | "admin" | "moderator";
 
 type StaffUser = {
@@ -174,7 +212,7 @@ type StaffUser = {
   last_name: string | null;
 };
 
-type Tab = "applications" | "participants" | "settings" | "bot" | "logs";
+type Tab = "applications" | "participants" | "support" | "settings" | "bot" | "logs";
 type SettingsSection = "topics" | "roles" | "questions" | "access";
 type PreviewKind = "audio" | "video" | "image" | "pdf" | null;
 type ApplicationFilter = "all" | "listener" | "artist" | "beatmaker" | "creative" | "approved" | "rejected";
@@ -256,6 +294,12 @@ const auditActionLabels: Record<string, string> = {
   remove_bot_avatar: "Аватар бота удален",
   update_bot_text: "Текст бота изменен",
   reset_bot_text: "Текст бота сброшен",
+  support_ticket_created: "Создан тикет поддержки",
+  support_ticket_claimed: "Тикет взят в работу",
+  support_user_replied: "Пользователь ответил в тикете",
+  support_admin_replied: "Администратор ответил в тикете",
+  support_ticket_released: "Тикет передан в общую очередь",
+  support_ticket_closed: "Тикет поддержки закрыт",
 };
 
 const staffRoleLabels: Record<StaffRole, string> = {
@@ -360,6 +404,8 @@ function App() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("topics");
   const [applications, setApplications] = useState<Application[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
+  const [supportTickets, setSupportTickets] = useState<SupportTicket[]>([]);
+  const [supportReplyDrafts, setSupportReplyDrafts] = useState<Record<number, string>>({});
   const [roles, setRoles] = useState<Role[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -459,6 +505,7 @@ function App() {
         fetch(`${apiBaseUrl}/applications`, { headers }),
         fetch(`${apiBaseUrl}/participants`, { headers }),
         fetch(`${apiBaseUrl}/settings/roles`, { headers }),
+        fetch(`${apiBaseUrl}/support`, { headers }),
       ]);
       const failedBaseResponse = baseResponses.find((response) => !response.ok);
       if (failedBaseResponse) {
@@ -469,9 +516,11 @@ function App() {
       const loadedApplications: Application[] = await baseResponses[0].json();
       const loadedParticipants: Participant[] = await baseResponses[1].json();
       const loadedRoles: Role[] = await baseResponses[2].json();
+      const loadedSupportTickets: SupportTicket[] = await baseResponses[3].json();
       setApplications(loadedApplications);
       setParticipants(loadedParticipants);
       setRoles(loadedRoles);
+      setSupportTickets(loadedSupportTickets);
       setRoleTitleDrafts(Object.fromEntries(
         loadedRoles.filter((role) => role.id !== undefined).map((role) => [role.id!, role.title]),
       ));
@@ -628,6 +677,54 @@ function App() {
           ? "Уведомление и новая персональная ссылка отправлены."
           : "Уведомление отправлено повторно."),
     );
+  }
+
+  async function updateSupportTicket(
+    id: number,
+    action: "claim" | "release" | "close",
+  ) {
+    setError(null);
+    setFeedback(null);
+    const response = await fetch(`${apiBaseUrl}/support/${id}/${action}`, {
+      method: "POST",
+      headers: authHeaders(initData),
+    });
+    if (!response.ok) {
+      setError(`Не удалось изменить тикет: ${await getApiError(response)}`);
+      return;
+    }
+    const result = await response.json();
+    const ticket: SupportTicket = result.ticket ?? result;
+    setSupportTickets((current) => current.map((item) => item.id === id ? ticket : item));
+    const messages = {
+      claim: `Тикет №${id} взят в работу.`,
+      release: `Тикет №${id} передан в общую очередь.`,
+      close: `Тикет №${id} закрыт.`,
+    };
+    setFeedback(result.warning ?? messages[action]);
+  }
+
+  async function replyToSupportTicket(id: number) {
+    const text = supportReplyDrafts[id]?.trim();
+    if (!text) {
+      setError("Введите ответ пользователю.");
+      return;
+    }
+    setError(null);
+    setFeedback(null);
+    const response = await fetch(`${apiBaseUrl}/support/${id}/reply`, {
+      method: "POST",
+      headers: { ...authHeaders(initData), "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!response.ok) {
+      setError(`Не удалось отправить ответ: ${await getApiError(response)}`);
+      return;
+    }
+    const result = await response.json();
+    setSupportTickets((current) => current.map((item) => item.id === id ? result.ticket : item));
+    setSupportReplyDrafts((current) => ({ ...current, [id]: "" }));
+    setFeedback(result.warning ?? "Ответ отправлен пользователю.");
   }
 
   function toggleParticipantRole(participantId: number, roleCode: string) {
@@ -1148,6 +1245,14 @@ function App() {
         <button className={activeTab === "participants" ? "active" : ""} onClick={() => setActiveTab("participants")}>
           <Users size={18} /> Участники
         </button>
+        <button className={activeTab === "support" ? "active" : ""} onClick={() => setActiveTab("support")}>
+          <MessageCircle size={18} /> Поддержка
+          {supportTickets.some((ticket) => ticket.status !== "closed") && (
+            <span className="tab-indicator">
+              {supportTickets.filter((ticket) => ticket.status !== "closed").length}
+            </span>
+          )}
+        </button>
         {hasFullAccess && <button className={activeTab === "settings" ? "active" : ""} onClick={() => setActiveTab("settings")}>
           <Settings size={18} /> Настройки
         </button>}
@@ -1337,6 +1442,101 @@ function App() {
               </React.Fragment>
             ))}
             {filteredParticipants.length === 0 && <div className="empty">Ничего не найдено.</div>}
+          </div>
+        </section>
+      )}
+
+      {activeTab === "support" && (
+        <section className="section-content">
+          <div className="section-heading">
+            <div><h2>Поддержка</h2><p>Обращения пользователей и переписка с администрацией</p></div>
+            <span className="count">{supportTickets.filter((ticket) => ticket.status !== "closed").length}</span>
+          </div>
+          <div className="support-list">
+            {supportTickets.map((ticket) => {
+              const isAssignedToCurrent = ticket.assigned_admin?.id === currentAdmin?.id;
+              const userName = [ticket.user.first_name, ticket.user.last_name].filter(Boolean).join(" ") || "Без имени";
+              const assigneeName = ticket.assigned_admin
+                ? [ticket.assigned_admin.first_name, ticket.assigned_admin.last_name].filter(Boolean).join(" ")
+                  || (ticket.assigned_admin.username ? `@${ticket.assigned_admin.username}` : `ID ${ticket.assigned_admin.telegram_id}`)
+                : null;
+              return (
+                <article className="support-ticket" key={ticket.id}>
+                  <div className="support-ticket-head">
+                    <div>
+                      <strong>Тикет №{ticket.id}</strong>
+                      <span>{formatDate(ticket.created_at)}</span>
+                    </div>
+                    <span className={`support-status ${ticket.status}`}>
+                      {ticket.status === "open" ? "Новый" : ticket.status === "in_progress" ? "В работе" : "Закрыт"}
+                    </span>
+                  </div>
+                  <div className="support-meta">
+                    <div>
+                      <strong>{userName}</strong>
+                      <span>{ticket.user.username ? `@${ticket.user.username}` : `ID ${ticket.user.telegram_id}`}</span>
+                    </div>
+                    <div>
+                      <span>Ответственный</span>
+                      <strong>{assigneeName ?? "Не назначен"}</strong>
+                    </div>
+                  </div>
+                  <div className="support-thread">
+                    {ticket.messages.map((message) => (
+                      <div className={`support-message ${message.sender_type}`} key={message.id}>
+                        <div>
+                          <strong>
+                            {message.sender_type === "user"
+                              ? userName
+                              : message.admin
+                                ? [message.admin.first_name, message.admin.last_name].filter(Boolean).join(" ")
+                                  || (message.admin.username ? `@${message.admin.username}` : "Администратор")
+                                : "Администратор"}
+                          </strong>
+                          <time>{formatLogDate(message.created_at)}</time>
+                        </div>
+                        <p>{message.text}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="support-actions">
+                    {ticket.status === "open" && !ticket.assigned_admin && (
+                      <button className="approve" onClick={() => updateSupportTicket(ticket.id, "claim")}>
+                        <UserCheck size={17} /> Взять тикет
+                      </button>
+                    )}
+                    {ticket.status !== "closed" && isAssignedToCurrent && (
+                      <>
+                        <div className="support-reply">
+                          <textarea
+                            rows={3}
+                            placeholder="Ответ пользователю"
+                            value={supportReplyDrafts[ticket.id] ?? ""}
+                            onChange={(event) => setSupportReplyDrafts((current) => ({
+                              ...current,
+                              [ticket.id]: event.target.value,
+                            }))}
+                          />
+                          <button className="approve" onClick={() => replyToSupportTicket(ticket.id)}>
+                            <Send size={17} /> Ответить пользователю
+                          </button>
+                        </div>
+                        <button onClick={() => updateSupportTicket(ticket.id, "release")}>
+                          <UserMinus size={17} /> Передать тикет
+                        </button>
+                        <button className="reject" onClick={() => updateSupportTicket(ticket.id, "close")}>
+                          <XCircle size={17} /> Закрыть тикет
+                        </button>
+                      </>
+                    )}
+                    {ticket.status !== "closed" && ticket.assigned_admin && !isAssignedToCurrent && (
+                      <span className="support-locked">Тикет находится в работе у другого сотрудника.</span>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+            {supportTickets.length === 0 && <div className="empty">Обращений пока нет.</div>}
           </div>
         </section>
       )}

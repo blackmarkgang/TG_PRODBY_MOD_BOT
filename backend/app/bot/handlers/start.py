@@ -1,5 +1,6 @@
 from aiogram import Router
 from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
@@ -16,11 +17,16 @@ from app.services.community_access import (
     is_group_member,
 )
 from app.services.bot_text_service import render_bot_text
+from app.services.notification_service import (
+    application_invite_keyboard,
+    create_application_invite,
+)
 
 router = Router()
 
 @router.message(CommandStart())
-async def start(message: Message) -> None:
+async def start(message: Message, state: FSMContext) -> None:
+    await state.clear()
     if message.from_user is not None:
         telegram_id = message.from_user.id
         async with SessionLocal() as session:
@@ -32,9 +38,21 @@ async def start(message: Message) -> None:
                 return
             active_application = await get_active_application(session, telegram_id)
             if active_application is not None:
+                reply_markup = None
+                if active_application.status == "approved":
+                    try:
+                        invite_url = await create_application_invite(
+                            message.bot,
+                            active_application.id,
+                        )
+                        if invite_url:
+                            reply_markup = application_invite_keyboard(invite_url)
+                    except Exception:
+                        reply_markup = None
                 await message.answer(
                     await active_application_message(active_application),
                     parse_mode="HTML",
+                    reply_markup=reply_markup,
                 )
                 return
             if (

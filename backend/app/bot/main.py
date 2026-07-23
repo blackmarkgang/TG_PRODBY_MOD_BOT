@@ -2,8 +2,9 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
+from aiogram.types import BotCommand
 
-from app.bot.handlers import application, membership, moderation, start
+from app.bot.handlers import application, membership, moderation, start, support
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.services.bootstrap import seed_defaults
@@ -24,6 +25,13 @@ async def main() -> None:
         await seed_defaults(session)
 
     bot = Bot(token=settings.bot_token)
+    await bot.set_my_commands(
+        [
+            BotCommand(command="start", description="Главное меню"),
+            BotCommand(command="support", description="Обратиться в поддержку"),
+            BotCommand(command="admin", description="Панель управления"),
+        ]
+    )
     if settings.telegram_group_id:
         try:
             administrators = await bot.get_chat_administrators(int(settings.telegram_group_id))
@@ -36,6 +44,7 @@ async def main() -> None:
     dp = Dispatcher()
     dp.message.outer_middleware(GroupParticipantTrackingMiddleware())
     dp.include_router(start.router)
+    dp.include_router(support.router)
     dp.include_router(application.router)
     dp.include_router(membership.router)
     dp.include_router(moderation.router)

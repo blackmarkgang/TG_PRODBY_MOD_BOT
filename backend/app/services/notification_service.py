@@ -10,6 +10,26 @@ from app.db.models import Application
 from app.services.bot_text_service import render_bot_text
 
 
+async def create_application_invite(bot: Bot, application_id: int) -> str | None:
+    if not settings.telegram_group_id:
+        return None
+    invite = await bot.create_chat_invite_link(
+        chat_id=settings.telegram_group_id,
+        name=f"Заявка №{application_id}",
+        expire_date=datetime.now(timezone.utc) + timedelta(days=7),
+        member_limit=1,
+    )
+    return invite.invite_link
+
+
+def application_invite_keyboard(invite_url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🚪 Вступить в Prod.by", url=invite_url)]
+        ]
+    )
+
+
 async def notify_application_decision(
     application: Application,
     role_title: str | None = None,
@@ -24,13 +44,7 @@ async def notify_application_decision(
         if application.status == "approved":
             if settings.telegram_group_id:
                 try:
-                    invite = await bot.create_chat_invite_link(
-                        chat_id=settings.telegram_group_id,
-                        name=f"Заявка №{application.id}",
-                        expire_date=datetime.now(timezone.utc) + timedelta(days=7),
-                        member_limit=1,
-                    )
-                    invite_url = invite.invite_link
+                    invite_url = await create_application_invite(bot, application.id)
                     invite_created = True
                 except TelegramAPIError:
                     warning = "Решение сохранено, но бот не смог создать ссылку на вход. Проверьте права бота в группе."
@@ -49,11 +63,7 @@ async def notify_application_decision(
                 )
             if invite_url:
                 parts.append(await render_bot_text("invite_ready"))
-                keyboard = InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [InlineKeyboardButton(text="🚪 Вступить в Prod.by", url=invite_url)]
-                    ]
-                )
+                keyboard = application_invite_keyboard(invite_url)
             else:
                 parts.append(await render_bot_text("invite_unavailable"))
                 keyboard = None

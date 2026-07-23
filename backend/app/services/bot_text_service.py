@@ -11,6 +11,7 @@ from app.db.session import SessionLocal
 
 
 logger = logging.getLogger(__name__)
+BRAND_URL = "https://digitalhustlas.com/"
 
 TELEGRAM_HTML_TAGS = {
     "a",
@@ -366,6 +367,68 @@ BOT_TEXTS = (
         "Таймаут на отправку сообщений: <b>{seconds} сек.</b>",
         ("seconds",),
     ),
+    BotTextDefinition(
+        "support_prompt",
+        "Поддержка",
+        "Описание проблемы",
+        "Сообщение после команды /support.",
+        "🛟 <b>Поддержка Prod.by</b>\n\nКоротко опишите проблему одним сообщением. Мы передадим обращение администрации.",
+    ),
+    BotTextDefinition(
+        "support_ticket_created",
+        "Поддержка",
+        "Тикет создан",
+        "Подтверждение создания обращения.",
+        "✅ <b>Обращение №{ticket_id} создано</b>\n\nАдминистрация ответит вам в этом чате.",
+        ("ticket_id",),
+    ),
+    BotTextDefinition(
+        "support_ticket_exists",
+        "Поддержка",
+        "Есть активный тикет",
+        "Сообщение при повторной команде /support.",
+        "💬 <b>Обращение №{ticket_id} уже открыто</b>\n\nМожно дополнить его кнопкой ниже.",
+        ("ticket_id",),
+    ),
+    BotTextDefinition(
+        "support_reply_prompt",
+        "Поддержка",
+        "Ответ пользователя",
+        "Запрос ответа пользователя по тикету.",
+        "✍️ <b>Ответ по обращению №{ticket_id}</b>\n\nОтправьте сообщение, которое нужно добавить в тикет.",
+        ("ticket_id",),
+    ),
+    BotTextDefinition(
+        "support_reply_received",
+        "Поддержка",
+        "Ответ принят",
+        "Подтверждение добавления ответа пользователя.",
+        "✅ <b>Ответ добавлен в обращение №{ticket_id}</b>",
+        ("ticket_id",),
+    ),
+    BotTextDefinition(
+        "support_admin_reply",
+        "Поддержка",
+        "Ответ администрации",
+        "Сообщение пользователю при ответе из панели.",
+        "🛟 <b>Ответ поддержки по обращению №{ticket_id}</b>\n\n{message}",
+        ("ticket_id", "message"),
+    ),
+    BotTextDefinition(
+        "support_ticket_closed",
+        "Поддержка",
+        "Тикет закрыт",
+        "Уведомление пользователю о закрытии обращения.",
+        "✅ <b>Обращение №{ticket_id} закрыто</b>\n\nЕсли появится новый вопрос, отправьте /support.",
+        ("ticket_id",),
+    ),
+    BotTextDefinition(
+        "support_ticket_unavailable",
+        "Поддержка",
+        "Тикет недоступен",
+        "Ответ на устаревшую кнопку тикета.",
+        "Это обращение уже закрыто. Для нового вопроса отправьте /support.",
+    ),
 )
 
 BOT_TEXTS_BY_KEY = {item.key: item for item in BOT_TEXTS}
@@ -412,7 +475,27 @@ async def render_bot_text(key: str, **values: object) -> str:
     except ValueError:
         logger.exception("Invalid bot text override for %s; using default", key)
         template = BOT_TEXTS_BY_KEY[key].default
-    return template.format(**values)
+    return linkify_brand(template.format(**values))
+
+
+def linkify_brand(text: str) -> str:
+    import re
+
+    parts: list[str] = []
+    anchor_depth = 0
+    for chunk in re.split(r"(<[^>]+>)", text):
+        lowered = chunk.lower()
+        if lowered.startswith("<a ") or lowered == "<a>":
+            anchor_depth += 1
+            parts.append(chunk)
+        elif lowered == "</a>":
+            parts.append(chunk)
+            anchor_depth = max(0, anchor_depth - 1)
+        elif chunk.startswith("<") or anchor_depth:
+            parts.append(chunk)
+        else:
+            parts.append(chunk.replace("Prod.by", f'<a href="{BRAND_URL}">Prod.by</a>'))
+    return "".join(parts)
 
 
 async def get_bot_text_overrides(session: AsyncSession) -> dict[str, BotTextSetting]:

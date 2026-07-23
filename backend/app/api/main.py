@@ -12,6 +12,7 @@ from app.api.routes import (
     logs,
     participants,
     settings as settings_routes,
+    support,
     whitelist,
 )
 from app.core.config import settings
@@ -44,4 +45,5 @@ app.include_router(participants.router, prefix="/participants", tags=["participa
 app.include_router(settings_routes.router, prefix="/settings", tags=["settings"])
 app.include_router(configuration.router, prefix="/settings", tags=["settings"])
 app.include_router(logs.router, prefix="/logs", tags=["logs"])
+app.include_router(support.router, prefix="/support", tags=["support"])
 app.include_router(whitelist.router, prefix="/whitelist", tags=["whitelist"])
