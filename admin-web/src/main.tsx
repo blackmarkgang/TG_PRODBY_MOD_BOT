@@ -18,6 +18,7 @@ import {
   ListChecks,
   MessageCircle,
   MoreHorizontal,
+  Pause,
   Plus,
   Play,
   RefreshCw,
@@ -33,6 +34,7 @@ import {
   UserCheck,
   UserMinus,
   Users,
+  Volume2,
   XCircle,
 } from "lucide-react";
 import "./styles.css";
@@ -323,6 +325,14 @@ function formatFileSize(size: number | null): string {
   return `${(size / 1024 / 1024).toFixed(1)} МБ`;
 }
 
+function formatMediaTime(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return "00:00";
+  const totalSeconds = Math.floor(value);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat("ru-RU", {
     day: "2-digit",
@@ -414,6 +424,10 @@ function App() {
   const [applicationFilter, setApplicationFilter] = useState<ApplicationFilter>("all");
   const [reviewingApplicationId, setReviewingApplicationId] = useState<number | null>(null);
   const [previewFile, setPreviewFile] = useState<{ applicationId: number; file: ApplicationFile } | null>(null);
+  const [audioPlaying, setAudioPlaying] = useState(false);
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [audioVolume, setAudioVolume] = useState(0.8);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("topics");
   const [applications, setApplications] = useState<Application[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -456,6 +470,7 @@ function App() {
   const [previewUrls, setPreviewUrls] = useState<Record<number, string>>({});
   const [loadingPreviews, setLoadingPreviews] = useState<Set<number>>(new Set());
   const previewUrlsRef = useRef<Record<number, string>>({});
+  const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const supportRequestIdRef = useRef(0);
   const botAvatarUrlRef = useRef<string | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
@@ -491,6 +506,10 @@ function App() {
     () => applications.filter((application) => applicationMatchesFilter(application, applicationFilter)),
     [applicationFilter, applications],
   );
+  const activePreviewKind = previewFile ? getPreviewKind(previewFile.file) : null;
+  const activePreviewUrl = previewFile
+    ? previewFile.file.url ?? previewUrls[previewFile.file.id]
+    : null;
 
   useEffect(() => {
     window.Telegram?.WebApp?.ready();
@@ -515,11 +534,27 @@ function App() {
   useEffect(() => {
     if (!previewFile) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setPreviewFile(null);
+      if (event.key === "Escape") closeApplicationPreview();
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [previewFile]);
+
+  useEffect(() => {
+    setAudioCurrentTime(0);
+    setAudioDuration(0);
+    setAudioPlaying(false);
+  }, [previewFile?.file.id]);
+
+  useEffect(() => {
+    if (audioPlayerRef.current) audioPlayerRef.current.volume = audioVolume;
+  }, [audioVolume]);
+
+  useEffect(() => {
+    const player = audioPlayerRef.current;
+    if (activePreviewKind !== "audio" || !activePreviewUrl || !player) return;
+    void player.play().catch(() => setAudioPlaying(false));
+  }, [activePreviewKind, activePreviewUrl]);
 
   async function loadSupportTickets(silent = false) {
     const requestId = ++supportRequestIdRef.current;
@@ -1196,6 +1231,34 @@ function App() {
     if (!file.url) void loadPreview(applicationId, file);
   }
 
+  function closeApplicationPreview() {
+    audioPlayerRef.current?.pause();
+    setPreviewFile(null);
+    setAudioPlaying(false);
+  }
+
+  function toggleAudioPlayback() {
+    const player = audioPlayerRef.current;
+    if (!player || !activePreviewUrl) return;
+    if (player.paused) {
+      void player.play().catch(() => setAudioPlaying(false));
+    } else {
+      player.pause();
+    }
+  }
+
+  function seekAudio(value: number) {
+    const player = audioPlayerRef.current;
+    if (!player) return;
+    player.currentTime = value;
+    setAudioCurrentTime(value);
+  }
+
+  function changeAudioVolume(value: number) {
+    setAudioVolume(value);
+    if (audioPlayerRef.current) audioPlayerRef.current.volume = value;
+  }
+
   async function loadBotAvatar(avatarId: string | null) {
     if (botAvatarUrlRef.current) {
       URL.revokeObjectURL(botAvatarUrlRef.current);
@@ -1312,13 +1375,16 @@ function App() {
   const selectedTopic = topics.find((topic) => topic.id === selectedTopicId) ?? null;
   const hasFullAccess = currentAdmin?.role === "owner" || currentAdmin?.role === "admin";
   const botMessageCategories = Array.from(new Set(botMessages.map((item) => item.category)));
-  const activePreviewKind = previewFile ? getPreviewKind(previewFile.file) : null;
-  const activePreviewUrl = previewFile
-    ? previewFile.file.url ?? previewUrls[previewFile.file.id]
+  const previewApplication = previewFile
+    ? applications.find((application) => application.id === previewFile.applicationId) ?? null
     : null;
+  const previewUserName = previewApplication
+    ? [previewApplication.user.first_name, previewApplication.user.last_name].filter(Boolean).join(" ") || "Без имени"
+    : "";
+  const safeAudioDuration = Number.isFinite(audioDuration) ? audioDuration : 0;
 
   return (
-    <main className="shell">
+    <main className={`shell ${activePreviewKind === "audio" ? "with-audio-player" : ""}`}>
       <header className="app-header">
         <div className="brand-block">
           <h1>PROD<b className="brand-dot">.</b>BY</h1>
@@ -1946,9 +2012,81 @@ function App() {
         </section>
       )}
 
-      {previewFile && (
+      {previewFile && activePreviewKind === "audio" && (
+        <section className="audio-player-dock" aria-label={`Аудиоплеер: ${previewFile.file.file_name ?? "Вложение"}`}>
+          <audio
+            ref={audioPlayerRef}
+            src={activePreviewUrl ?? undefined}
+            preload="metadata"
+            onLoadedMetadata={(event) => setAudioDuration(event.currentTarget.duration)}
+            onDurationChange={(event) => setAudioDuration(event.currentTarget.duration)}
+            onTimeUpdate={(event) => setAudioCurrentTime(event.currentTarget.currentTime)}
+            onPlay={() => setAudioPlaying(true)}
+            onPause={() => setAudioPlaying(false)}
+            onEnded={() => setAudioPlaying(false)}
+          />
+          <button
+            className="audio-player-control primary"
+            disabled={!activePreviewUrl}
+            onClick={toggleAudioPlayback}
+            title={audioPlaying ? "Пауза" : "Воспроизвести"}
+            aria-label={audioPlaying ? "Пауза" : "Воспроизвести"}
+          >
+            {audioPlaying ? <Pause size={16} /> : <Play size={16} />}
+          </button>
+          <div className="audio-player-track">
+            <strong>{previewFile.file.file_name ?? fileTypeLabels[previewFile.file.file_type] ?? "Вложение"}</strong>
+            <span>
+              Заявка #{previewFile.applicationId}
+              {previewUserName ? ` · ${previewUserName}` : ""}
+              {previewFile.file.file_size ? ` · ${formatFileSize(previewFile.file.file_size)}` : ""}
+            </span>
+          </div>
+          <div className="audio-player-timeline">
+            <span>{formatMediaTime(audioCurrentTime)}</span>
+            <input
+              type="range"
+              min="0"
+              max={safeAudioDuration}
+              step="0.1"
+              value={Math.min(audioCurrentTime, safeAudioDuration)}
+              disabled={!safeAudioDuration}
+              onChange={(event) => seekAudio(Number(event.target.value))}
+              aria-label="Позиция воспроизведения"
+            />
+            <span>{formatMediaTime(safeAudioDuration)}</span>
+          </div>
+          <label className="audio-player-volume">
+            <Volume2 size={16} />
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={audioVolume}
+              onChange={(event) => changeAudioVolume(Number(event.target.value))}
+              aria-label="Громкость"
+            />
+          </label>
+          {previewFile.file.url ? (
+            <a className="audio-player-control" href={previewFile.file.url} target="_blank" rel="noreferrer" title="Скачать" aria-label="Скачать">
+              <Download size={16} />
+            </a>
+          ) : (
+            <button className="audio-player-control" onClick={() => void downloadFile(previewFile.applicationId, previewFile.file)} title="Скачать" aria-label="Скачать">
+              <Download size={16} />
+            </button>
+          )}
+          <button className="audio-player-control" onClick={closeApplicationPreview} title="Закрыть" aria-label="Закрыть">
+            <XCircle size={17} />
+          </button>
+          {loadingPreviews.has(previewFile.file.id) && <span className="audio-player-loading">Подготовка потока...</span>}
+        </section>
+      )}
+
+      {previewFile && activePreviewKind !== "audio" && (
         <div className="file-preview-backdrop" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) setPreviewFile(null);
+          if (event.target === event.currentTarget) closeApplicationPreview();
         }}>
           <section className="file-preview-dialog" role="dialog" aria-modal="true" aria-label={previewFile.file.file_name ?? "Предпросмотр вложения"}>
             <header>
@@ -1965,12 +2103,11 @@ function App() {
                 ) : (
                   <button className="icon-button" onClick={() => void downloadFile(previewFile.applicationId, previewFile.file)} title="Скачать" aria-label="Скачать"><Download size={16} /></button>
                 )}
-                <button className="icon-button" onClick={() => setPreviewFile(null)} title="Закрыть" aria-label="Закрыть"><XCircle size={17} /></button>
+                <button className="icon-button" onClick={closeApplicationPreview} title="Закрыть" aria-label="Закрыть"><XCircle size={17} /></button>
               </div>
             </header>
             <div className="file-preview-content">
               {loadingPreviews.has(previewFile.file.id) && <div className="loading-line">Загрузка предпросмотра...</div>}
-              {activePreviewUrl && activePreviewKind === "audio" && <audio controls autoPlay src={activePreviewUrl} />}
               {activePreviewUrl && activePreviewKind === "video" && <video controls autoPlay src={activePreviewUrl} />}
               {activePreviewUrl && activePreviewKind === "image" && <img src={activePreviewUrl} alt={previewFile.file.file_name ?? "Вложение"} />}
               {activePreviewUrl && activePreviewKind === "pdf" && <iframe src={activePreviewUrl} title={previewFile.file.file_name ?? "PDF"} />}
