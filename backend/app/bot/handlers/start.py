@@ -5,7 +5,7 @@ from aiogram.types import Message, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 
-from app.bot.keyboards import start_keyboard
+from app.bot.keyboards import cache_busted_webapp_url, start_keyboard
 from app.core.config import settings
 from app.db.models import AdminUser
 from app.db.session import SessionLocal
@@ -84,7 +84,10 @@ async def admin_panel(message: Message) -> None:
             )
             if result.scalar_one_or_none() is not None:
                 builder = InlineKeyboardBuilder()
-                builder.button(text="Открыть панель", web_app=WebAppInfo(url=settings.public_webapp_url))
+                builder.button(
+                    text="Открыть панель",
+                    web_app=WebAppInfo(url=cache_busted_webapp_url(settings.public_webapp_url)),
+                )
                 await message.answer(await render_bot_text("admin_panel"), parse_mode="HTML", reply_markup=builder.as_markup())
                 return
 

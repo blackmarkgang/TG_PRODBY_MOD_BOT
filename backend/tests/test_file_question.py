@@ -7,7 +7,7 @@ from app.bot.handlers.application import (
     has_minimum_attachments,
     is_valid_text_answer,
 )
-from app.bot.keyboards import portfolio_keyboard
+from app.bot.keyboards import cache_busted_webapp_url, portfolio_keyboard
 
 
 def text_message(text: str) -> SimpleNamespace:
@@ -45,3 +45,12 @@ def test_finish_button_is_hidden_until_second_attachment() -> None:
     keyboard = portfolio_keyboard(can_finish=True)
     assert isinstance(keyboard, ReplyKeyboardMarkup)
     assert keyboard.keyboard[0][0].text == "✅ Готово"
+
+
+def test_webapp_url_gets_cache_busting_version() -> None:
+    assert cache_busted_webapp_url("https://example.com/panel", 42) == (
+        "https://example.com/panel?_v=42"
+    )
+    assert cache_busted_webapp_url("https://example.com/panel?tab=support", 42) == (
+        "https://example.com/panel?tab=support&_v=42"
+    )

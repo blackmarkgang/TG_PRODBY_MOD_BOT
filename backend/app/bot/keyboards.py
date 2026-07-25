@@ -1,3 +1,5 @@
+from time import time
+
 from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -5,6 +7,11 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
 )
+
+
+def cache_busted_webapp_url(url: str, version: int | None = None) -> str:
+    separator = "&" if "?" in url else "?"
+    return f"{url}{separator}_v={version if version is not None else int(time())}"
 
 
 def start_keyboard() -> InlineKeyboardMarkup:

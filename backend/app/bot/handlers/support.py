@@ -14,6 +14,7 @@ from aiogram.types import (
 from sqlalchemy import desc, select
 from sqlalchemy.orm import selectinload
 
+from app.bot.keyboards import cache_busted_webapp_url
 from app.bot.states import SupportForm
 from app.core.config import settings
 from app.db.models import AdminUser, AuditLog, SupportMessage, SupportTicket
@@ -72,7 +73,9 @@ async def notify_staff_new_ticket(bot, ticket: SupportTicket, text: str) -> None
             [
                 InlineKeyboardButton(
                     text="Открыть поддержку",
-                    web_app=WebAppInfo(url=settings.public_webapp_url),
+                    web_app=WebAppInfo(
+                        url=cache_busted_webapp_url(settings.public_webapp_url)
+                    ),
                 )
             ]
         ]
