@@ -1,4 +1,10 @@
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+)
 
 
 def start_keyboard() -> InlineKeyboardMarkup:
@@ -9,10 +15,11 @@ def start_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def portfolio_keyboard(has_attachments: bool = False) -> ReplyKeyboardMarkup:
-    button_text = "✅ Готово" if has_attachments else "⏭ Пропустить вложения"
+def portfolio_keyboard(can_finish: bool = False) -> ReplyKeyboardMarkup | ReplyKeyboardRemove:
+    if not can_finish:
+        return ReplyKeyboardRemove()
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=button_text)]],
+        keyboard=[[KeyboardButton(text="✅ Готово")]],
         resize_keyboard=True,
     )
 

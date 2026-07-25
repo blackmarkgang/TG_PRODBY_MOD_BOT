@@ -29,6 +29,16 @@ from app.services.bot_text_service import render_bot_text
 router = Router()
 
 MAX_ATTACHMENTS = 10
+MIN_ATTACHMENTS = 2
+MIN_TEXT_ANSWER_LENGTH = 10
+
+
+def is_valid_text_answer(answer: str) -> bool:
+    return len(answer.strip()) >= MIN_TEXT_ANSWER_LENGTH
+
+
+def has_minimum_attachments(count: int) -> bool:
+    return count >= MIN_ATTACHMENTS
 
 
 async def answer_form(message: Message, text: str, **kwargs) -> None:
@@ -163,6 +173,15 @@ async def receive_question_answer(message: Message, state: FSMContext) -> None:
             await render_bot_text("text_answer_required"),
         )
         return
+    if question["answer_type"] == "text" and not is_valid_text_answer(answer):
+        await answer_form(
+            message,
+            await render_bot_text(
+                "text_answer_too_short",
+                min_length=MIN_TEXT_ANSWER_LENGTH,
+            ),
+        )
+        return
     if question["answer_type"] == "number" and not answer.isdigit():
         await answer_form(message, await render_bot_text("number_answer_required"))
         return
@@ -273,20 +292,32 @@ async def show_file_question(message: Message, state: FSMContext) -> None:
             help_text=help_text,
             step=current_step,
             total=len(questions),
+            min_attachments=MIN_ATTACHMENTS,
             max_attachments=MAX_ATTACHMENTS,
         ),
-        reply_markup=portfolio_keyboard(has_attachments=False),
+        reply_markup=portfolio_keyboard(can_finish=False),
     )
 
 
 @router.message(
     ApplicationForm.file_upload,
-    F.text.in_({"Готово", "✅ Готово", "Пропустить вложения", "⏭ Пропустить вложения"}),
+    F.text.in_({"Готово", "✅ Готово"}),
 )
 async def finish_file_question(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     added_count = len(data.get("files", [])) - data.get("file_question_start_count", 0)
-    answer = f"Добавлено вложений: {added_count}" if added_count else "Пропущено"
+    if not has_minimum_attachments(added_count):
+        await answer_form(
+            message,
+            await render_bot_text(
+                "attachment_minimum",
+                count=added_count,
+                min_attachments=MIN_ATTACHMENTS,
+            ),
+            reply_markup=portfolio_keyboard(can_finish=False),
+        )
+        return
+    answer = f"Добавлено вложений: {added_count}"
     await save_answer_and_advance(message, state, answer)
 
 
@@ -300,7 +331,7 @@ async def receive_file_item(message: Message, state: FSMContext) -> None:
         await answer_form(
             message,
             await render_bot_text("attachment_limit", max_attachments=MAX_ATTACHMENTS),
-            reply_markup=portfolio_keyboard(has_attachments=True),
+            reply_markup=portfolio_keyboard(can_finish=True),
         )
         return
 
@@ -309,7 +340,7 @@ async def receive_file_item(message: Message, state: FSMContext) -> None:
         await answer_form(
             message,
             await render_bot_text("attachment_unrecognized"),
-            reply_markup=portfolio_keyboard(has_attachments=current_count > 0),
+            reply_markup=portfolio_keyboard(can_finish=has_minimum_attachments(current_count)),
         )
         return
 
@@ -322,7 +353,7 @@ async def receive_file_item(message: Message, state: FSMContext) -> None:
                 await answer_form(
                     message,
                     await render_bot_text("attachment_check_failed"),
-                    reply_markup=portfolio_keyboard(has_attachments=current_count > 0),
+                    reply_markup=portfolio_keyboard(can_finish=has_minimum_attachments(current_count)),
                 )
                 return
     oversized_item = next(
@@ -338,7 +369,7 @@ async def receive_file_item(message: Message, state: FSMContext) -> None:
         await answer_form(
             message,
             await render_bot_text("attachment_too_large"),
-            reply_markup=portfolio_keyboard(has_attachments=current_count > 0),
+            reply_markup=portfolio_keyboard(can_finish=has_minimum_attachments(current_count)),
         )
         return
 
@@ -351,9 +382,10 @@ async def receive_file_item(message: Message, state: FSMContext) -> None:
         await render_bot_text(
             "attachment_added",
             count=current_count,
+            min_attachments=MIN_ATTACHMENTS,
             max_attachments=MAX_ATTACHMENTS,
         ),
-        reply_markup=portfolio_keyboard(has_attachments=True),
+        reply_markup=portfolio_keyboard(can_finish=has_minimum_attachments(current_count)),
     )
 
 
@@ -453,7 +485,9 @@ async def submit_application(message: Message, state: FSMContext) -> None:
             await answer_form(
                 message,
                 await render_bot_text("submit_attachment_too_large"),
-                reply_markup=portfolio_keyboard(has_attachments=bool(data.get("files"))),
+                reply_markup=portfolio_keyboard(
+                    can_finish=has_minimum_attachments(len(data.get("files", [])))
+                ),
             )
             return
         except ActiveApplicationError as exc:
