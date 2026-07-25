@@ -356,6 +356,21 @@ function getApplicationDirectionTitle(application: Application): string {
     || "Без направления";
 }
 
+function getApplicationTextAnswers(application: Application): { label: string; value: string }[] {
+  return Object.entries(application.answers)
+    .filter(([key, value]) => {
+      const normalized = value.trim();
+      return key !== "role_details"
+        && normalized.length > 0
+        && normalized !== "Пропущено"
+        && !normalized.startsWith("Добавлено вложений:");
+    })
+    .map(([key, value]) => ({
+      label: application.answer_labels[key] || "Ответ",
+      value: value.trim(),
+    }));
+}
+
 function formatLogDate(value: string): string {
   const date = new Date(value);
   const datePart = new Intl.DateTimeFormat("ru-RU", {
@@ -1447,12 +1462,13 @@ function App() {
           </div>
           <div className="application-queue">
             <div className="compact-application-head">
-              <span>Заявка</span><span>Пользователь</span><span>Направление</span><span>Примеры работ</span><span>Действия</span>
+              <span>Заявка</span><span>Пользователь</span><span>Направление</span><span>Ответы и работы</span><span>Действия</span>
             </div>
             {filteredApplications.length === 0 && <div className="empty">В этой вкладке заявок нет.</div>}
             {filteredApplications.map((item) => {
               const reviewing = reviewingApplicationId === item.id;
               const displayName = [item.user.first_name, item.user.last_name].filter(Boolean).join(" ") || "Без имени";
+              const textAnswers = getApplicationTextAnswers(item);
               return (
                 <div className={`compact-application-row ${reviewing ? "reviewing" : ""}`} key={item.id}>
                   <div className="compact-application-number">
@@ -1486,21 +1502,36 @@ function App() {
                       <span>{item.admin_comment || "Комментарий пользователю не оставлен"}</span>
                     </div>
                   ) : (
-                    <div className="compact-work-files">
-                      {item.files.length > 0 ? item.files.slice(0, 10).map((file) => {
-                        const previewKind = getPreviewKind(file);
-                        return (
-                          <button
-                            className="compact-work-file"
-                            key={file.id}
-                            title={`${file.file_name ?? fileTypeLabels[file.file_type] ?? "Вложение"}${file.file_size ? ` · ${formatFileSize(file.file_size)}` : ""}`}
-                            onClick={() => openApplicationFile(item.id, file)}
-                          >
-                            {previewKind === "audio" ? <Play size={11} /> : previewKind ? <Eye size={11} /> : <FileText size={11} />}
-                            <span>{file.file_name ?? fileTypeLabels[file.file_type] ?? "Вложение"}</span>
-                          </button>
-                        );
-                      }) : <span className="compact-skipped">Пропущено</span>}
+                    <div className="compact-application-content">
+                      {textAnswers.length > 0 && (
+                        <div className="compact-text-answers">
+                          {textAnswers.map((answer, index) => (
+                            <div className="compact-text-answer" key={`${answer.label}-${index}`} title={`${answer.label}: ${answer.value}`}>
+                              <span>{answer.label}</span>
+                              <strong>{answer.value}</strong>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {item.files.length > 0 && (
+                        <div className="compact-work-files">
+                          {item.files.slice(0, 10).map((file) => {
+                            const previewKind = getPreviewKind(file);
+                            return (
+                              <button
+                                className="compact-work-file"
+                                key={file.id}
+                                title={`${file.file_name ?? fileTypeLabels[file.file_type] ?? "Вложение"}${file.file_size ? ` · ${formatFileSize(file.file_size)}` : ""}`}
+                                onClick={() => openApplicationFile(item.id, file)}
+                              >
+                                {previewKind === "audio" ? <Play size={11} /> : previewKind ? <Eye size={11} /> : <FileText size={11} />}
+                                <span>{file.file_name ?? fileTypeLabels[file.file_type] ?? "Вложение"}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {textAnswers.length === 0 && item.files.length === 0 && <span className="compact-skipped">Нет ответов и файлов</span>}
                     </div>
                   )}
                   <div className="compact-actions">

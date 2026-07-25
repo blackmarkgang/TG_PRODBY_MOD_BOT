@@ -624,6 +624,42 @@ textarea {
   color: #ff7070;
 }
 
+.compact-application-content {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.compact-text-answers {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.compact-text-answer {
+  min-width: 0;
+}
+
+.compact-text-answer span,
+.compact-text-answer strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-text-answer span {
+  color: #707070;
+  font-size: 9px;
+}
+
+.compact-text-answer strong {
+  margin-top: 1px;
+  color: #dedede;
+  font-size: 11px;
+  font-weight: 500;
+}
+
 .compact-work-files {
   min-width: 0;
   display: grid;
@@ -2057,7 +2093,7 @@ textarea {
     grid-row: 1;
   }
 
-  .compact-work-files,
+  .compact-application-content,
   .compact-review-comment,
   .compact-resolution-summary {
     grid-column: 1 / -1;
@@ -2123,7 +2159,7 @@ textarea {
     grid-row: 2;
   }
 
-  .compact-work-files,
+  .compact-application-content,
   .compact-review-comment,
   .compact-resolution-summary {
     grid-column: 1 / -1;
