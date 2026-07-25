@@ -1548,6 +1548,7 @@ function App() {
                       </>
                     ) : (
                       <>
+                        {item.status === "rejected" && <button className="compact-action approve" title="Одобрить заявку" aria-label="Одобрить заявку" onClick={() => void review(item.id, "approve")}><Check size={15} /></button>}
                         {["approved", "rejected"].includes(item.status) && <button className="compact-action" title="Повторить уведомление" aria-label="Повторить уведомление" onClick={() => void resendNotification(item.id)}><Send size={14} /></button>}
                         {item.status === "approved" && <button className="compact-action reject" title="Аннулировать" aria-label="Аннулировать" onClick={() => void annulApplication(item.id)}><RotateCcw size={15} /></button>}
                         {!item.user.is_banned && <button className="compact-action ban-button" title="Заблокировать" aria-label="Заблокировать" onClick={() => void banApplication(item.id)}><ShieldBan size={15} /></button>}

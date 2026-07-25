@@ -165,6 +165,10 @@ def get_application_role_code(application: Application) -> str | None:
     return DIRECTION_ROLE_CODES.get(direction)
 
 
+def can_approve_application_status(status: str) -> bool:
+    return status in {"pending", "rejected"}
+
+
 @router.get("")
 async def list_applications(
     status: str | None = None,
@@ -271,8 +275,8 @@ async def approve_application(
     application = await get_application_with_user(session, application_id)
     if application is None:
         raise HTTPException(status_code=404, detail="Заявка не найдена")
-    if application.status != "pending":
-        raise HTTPException(status_code=409, detail="Заявка уже обработана")
+    if not can_approve_application_status(application.status):
+        raise HTTPException(status_code=409, detail="Эту заявку нельзя одобрить")
     role_code = get_application_role_code(application)
     try:
         roles = await set_user_roles(
