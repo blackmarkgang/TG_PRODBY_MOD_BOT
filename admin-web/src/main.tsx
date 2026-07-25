@@ -604,7 +604,7 @@ function App() {
       setCurrentAdmin(loadedAdmin);
 
       const baseResponses = await Promise.all([
-        fetch(`${apiBaseUrl}/applications`, { headers }),
+        fetch(`${apiBaseUrl}/applications`, { headers, cache: "no-store" }),
         fetch(`${apiBaseUrl}/participants`, { headers }),
         fetch(`${apiBaseUrl}/settings/roles`, { headers }),
         fetch(`${apiBaseUrl}/support`, { headers }),
@@ -708,6 +708,18 @@ function App() {
     }
 
     const result = await response.json();
+    const nextStatus = String(result.status || (action === "approve" ? "approved" : "rejected"));
+    const adminComment = comments[id]?.trim() || null;
+    setApplications((current) => current.map((application) => (
+      application.id === id
+        ? {
+            ...application,
+            status: nextStatus,
+            admin_comment: adminComment,
+            reviewed_at: new Date().toISOString(),
+          }
+        : application
+    )));
     setFeedback(
       result.warning ??
         (result.invite_created
