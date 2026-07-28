@@ -10,12 +10,14 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  Clock,
   Download,
   ExternalLink,
   Eye,
   FileText,
   Hash,
   ListChecks,
+  Megaphone,
   MessageCircle,
   MoreHorizontal,
   Pause,
@@ -206,6 +208,26 @@ type SupportTicket = {
   messages: SupportMessage[];
 };
 
+type BroadcastAudience = "all" | "members" | "non_members";
+type BroadcastStatus = "scheduled" | "processing" | "completed" | "canceled";
+
+type BroadcastItem = {
+  id: number;
+  status: BroadcastStatus;
+  message: string;
+  audience: BroadcastAudience;
+  role_codes: string[];
+  disable_link_preview: boolean;
+  scheduled_at: string;
+  target_count: number;
+  sent_count: number;
+  failed_count: number;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  created_by: SupportAdmin;
+};
+
 type StaffRole = "owner" | "admin" | "moderator";
 
 type StaffUser = {
@@ -217,7 +239,7 @@ type StaffUser = {
   last_name: string | null;
 };
 
-type Tab = "applications" | "participants" | "support" | "settings" | "bot" | "logs";
+type Tab = "applications" | "participants" | "support" | "broadcasts" | "settings" | "bot" | "logs";
 type SettingsSection = "topics" | "roles" | "questions" | "access";
 type PreviewKind = "audio" | "video" | "image" | "pdf" | null;
 type ApplicationFilter = "all" | "pending" | "listener" | "artist" | "beatmaker" | "creative" | "approved" | "rejected";
@@ -233,6 +255,19 @@ const applicationFilters: { id: ApplicationFilter; label: string }[] = [
   { id: "approved", label: "Одобренные" },
   { id: "rejected", label: "Отклонённые" },
 ];
+
+const broadcastAudienceLabels: Record<BroadcastAudience, string> = {
+  all: "Все пользователи бота",
+  members: "Участники группы",
+  non_members: "Не состоят в группе",
+};
+
+const broadcastStatusLabels: Record<BroadcastStatus, string> = {
+  scheduled: "Запланирована",
+  processing: "Отправляется",
+  completed: "Завершена",
+  canceled: "Отменена",
+};
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 const devAdminId = import.meta.env.VITE_DEV_ADMIN_ID ?? "";
@@ -268,6 +303,8 @@ const auditActionLabels: Record<string, string> = {
   reject: "Заявка отклонена",
   ban_user: "Пользователь заблокирован",
   application_submitted: "Заявка отправлена",
+  create_broadcast: "Рассылка создана",
+  cancel_broadcast: "Рассылка отменена",
   assign_roles: "Роли участника изменены",
   set_topic_roles: "Права темы изменены",
   create_topic: "Тема добавлена",
@@ -434,9 +471,35 @@ function applicationMatchesFilter(application: Application, filter: ApplicationF
   return application.status === "pending" && getApplicationDirection(application) === filter;
 }
 
+function applicationMatchesSearch(application: Application, search: string): boolean {
+  const query = search
+    .trim()
+    .toLocaleLowerCase("ru-RU")
+    .replace(/^[@#]/, "");
+  if (!query) return true;
+  return [
+    String(application.id),
+    String(application.user.telegram_id),
+    application.user.username,
+    application.user.first_name,
+    application.user.last_name,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLocaleLowerCase("ru-RU")
+    .includes(query);
+}
+
+function defaultScheduledAt(): string {
+  const date = new Date(Date.now() + 60 * 60 * 1000);
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return localDate.toISOString().slice(0, 16);
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>("applications");
   const [applicationFilter, setApplicationFilter] = useState<ApplicationFilter>("all");
+  const [applicationSearch, setApplicationSearch] = useState("");
   const [reviewingApplicationId, setReviewingApplicationId] = useState<number | null>(null);
   const [previewFile, setPreviewFile] = useState<{ applicationId: number; file: ApplicationFile } | null>(null);
   const [audioPlaying, setAudioPlaying] = useState(false);
@@ -447,6 +510,15 @@ function App() {
   const [applications, setApplications] = useState<Application[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [supportTickets, setSupportTickets] = useState<SupportTicket[]>([]);
+  const [broadcasts, setBroadcasts] = useState<BroadcastItem[]>([]);
+  const [broadcastMessage, setBroadcastMessage] = useState("");
+  const [broadcastAudience, setBroadcastAudience] = useState<BroadcastAudience>("all");
+  const [broadcastRoleCodes, setBroadcastRoleCodes] = useState<string[]>([]);
+  const [broadcastScheduleMode, setBroadcastScheduleMode] = useState<"now" | "later">("now");
+  const [broadcastScheduledAt, setBroadcastScheduledAt] = useState(defaultScheduledAt);
+  const [broadcastDisablePreview, setBroadcastDisablePreview] = useState(true);
+  const [broadcastAudienceCount, setBroadcastAudienceCount] = useState<number | null>(null);
+  const [broadcastSubmitting, setBroadcastSubmitting] = useState(false);
   const [expandedSupportTicketId, setExpandedSupportTicketId] = useState<number | null>(null);
   const [supportReplyDrafts, setSupportReplyDrafts] = useState<Record<number, string>>({});
   const [roles, setRoles] = useState<Role[]>([]);
@@ -487,9 +559,11 @@ function App() {
   const previewUrlsRef = useRef<Record<number, string>>({});
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const supportRequestIdRef = useRef(0);
+  const broadcastRequestIdRef = useRef(0);
   const botAvatarUrlRef = useRef<string | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const initData = useMemo(() => window.Telegram?.WebApp?.initData ?? "", []);
+  const hasFullAccess = currentAdmin?.role === "owner" || currentAdmin?.role === "admin";
   const filteredParticipants = useMemo(() => {
     const query = participantSearch.trim().toLocaleLowerCase("ru-RU").replace(/^@/, "");
     return participants.filter((participant) => {
@@ -518,8 +592,11 @@ function App() {
     ]),
   ) as Record<ApplicationFilter, number>, [applications]);
   const filteredApplications = useMemo(
-    () => applications.filter((application) => applicationMatchesFilter(application, applicationFilter)),
-    [applicationFilter, applications],
+    () => applications.filter((application) => (
+      applicationMatchesFilter(application, applicationFilter)
+      && applicationMatchesSearch(application, applicationSearch)
+    )),
+    [applicationFilter, applicationSearch, applications],
   );
   const activePreviewKind = previewFile ? getPreviewKind(previewFile.file) : null;
   const activePreviewUrl = previewFile
@@ -545,6 +622,22 @@ function App() {
     }, 3000);
     return () => window.clearInterval(intervalId);
   }, [activeTab, currentAdmin, initData]);
+
+  useEffect(() => {
+    if (activeTab !== "broadcasts" || !hasFullAccess) return;
+    const intervalId = window.setInterval(() => {
+      void loadBroadcasts(true);
+    }, 3000);
+    return () => window.clearInterval(intervalId);
+  }, [activeTab, hasFullAccess, initData]);
+
+  useEffect(() => {
+    if (!hasFullAccess) return;
+    const timeoutId = window.setTimeout(() => {
+      void loadBroadcastAudienceCount();
+    }, 250);
+    return () => window.clearTimeout(timeoutId);
+  }, [broadcastAudience, broadcastRoleCodes, hasFullAccess, initData]);
 
   useEffect(() => {
     if (!previewFile) return;
@@ -586,6 +679,46 @@ function App() {
       if (requestId === supportRequestIdRef.current) setSupportTickets(tickets);
     } catch {
       if (!silent) setError("Не удалось обновить поддержку.");
+    }
+  }
+
+  async function loadBroadcasts(silent = false) {
+    const requestId = ++broadcastRequestIdRef.current;
+    try {
+      const response = await fetch(`${apiBaseUrl}/broadcasts`, {
+        headers: authHeaders(initData),
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        if (!silent) setError(`Не удалось обновить рассылки: ${await getApiError(response)}`);
+        return;
+      }
+      const loadedBroadcasts: BroadcastItem[] = await response.json();
+      if (requestId === broadcastRequestIdRef.current) setBroadcasts(loadedBroadcasts);
+    } catch {
+      if (!silent) setError("Не удалось обновить рассылки.");
+    }
+  }
+
+  async function loadBroadcastAudienceCount() {
+    try {
+      const response = await fetch(`${apiBaseUrl}/broadcasts/audience-count`, {
+        method: "POST",
+        headers: { ...authHeaders(initData), "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          audience: broadcastAudience,
+          role_codes: broadcastRoleCodes,
+        }),
+      });
+      if (!response.ok) {
+        setBroadcastAudienceCount(null);
+        return;
+      }
+      const result: { count: number } = await response.json();
+      setBroadcastAudienceCount(result.count);
+    } catch {
+      setBroadcastAudienceCount(null);
     }
   }
 
@@ -631,7 +764,14 @@ function App() {
       ));
 
       if (!fullAccess) {
-        setActiveTab((current) => current === "settings" || current === "bot" || current === "logs" ? "applications" : current);
+        setActiveTab((current) => (
+          current === "settings"
+          || current === "bot"
+          || current === "logs"
+          || current === "broadcasts"
+            ? "applications"
+            : current
+        ));
         setTopics([]);
         setQuestions([]);
         setLogs([]);
@@ -640,6 +780,7 @@ function App() {
         setBotProfile(null);
         setBotProfileDraft(null);
         setBotMessages([]);
+        setBroadcasts([]);
         return;
       }
 
@@ -650,8 +791,10 @@ function App() {
         fetch(`${apiBaseUrl}/logs/status`, { headers }),
         fetch(`${apiBaseUrl}/access/admins`, { headers }),
         fetch(`${apiBaseUrl}/bot-settings`, { headers }),
+        fetch(`${apiBaseUrl}/broadcasts`, { headers, cache: "no-store" }),
       ]);
-      const failedFullResponse = fullResponses.slice(0, 5).find((response) => !response.ok);
+      const failedFullResponse = [...fullResponses.slice(0, 5), fullResponses[6]]
+        .find((response) => !response.ok);
       if (failedFullResponse) {
         setError(`Не удалось загрузить данные: ${await getApiError(failedFullResponse)}`);
         return;
@@ -665,6 +808,7 @@ function App() {
       setLogs(await fullResponses[2].json());
       setBotStatus(await fullResponses[3].json());
       setStaff(loadedStaff);
+      setBroadcasts(await fullResponses[6].json());
       if (fullResponses[5].ok) {
         const loadedBotSettings: BotSettingsResponse = await fullResponses[5].json();
         setBotProfile(loadedBotSettings.profile);
@@ -1399,8 +1543,111 @@ function App() {
     setFeedback(`Текст «${item.title}» восстановлен.`);
   }
 
+  function toggleBroadcastRole(roleCode: string) {
+    setBroadcastRoleCodes((current) => (
+      current.includes(roleCode)
+        ? current.filter((code) => code !== roleCode)
+        : [...current, roleCode]
+    ));
+  }
+
+  async function sendBroadcastTest() {
+    const message = broadcastMessage.trim();
+    if (!message) {
+      setError("Введите текст рассылки.");
+      return;
+    }
+    setError(null);
+    setFeedback(null);
+    const response = await fetch(`${apiBaseUrl}/broadcasts/test`, {
+      method: "POST",
+      headers: { ...authHeaders(initData), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message,
+        disable_link_preview: broadcastDisablePreview,
+      }),
+    });
+    if (!response.ok) {
+      setError(`Не удалось отправить тест: ${await getApiError(response)}`);
+      return;
+    }
+    setFeedback("Тестовое сообщение отправлено вам в Telegram.");
+  }
+
+  async function createBroadcast() {
+    const message = broadcastMessage.trim();
+    if (!message) {
+      setError("Введите текст рассылки.");
+      return;
+    }
+    if (!broadcastAudienceCount) {
+      setError("В выбранной аудитории нет получателей.");
+      return;
+    }
+    if (broadcastScheduleMode === "later" && !broadcastScheduledAt) {
+      setError("Укажите дату и время отправки.");
+      return;
+    }
+
+    const actionTitle = broadcastScheduleMode === "now"
+      ? "Отправить рассылку сейчас"
+      : `Запланировать рассылку на ${new Date(broadcastScheduledAt).toLocaleString("ru-RU")}`;
+    if (!window.confirm(`${actionTitle} для ${broadcastAudienceCount} пользователей?`)) return;
+
+    setBroadcastSubmitting(true);
+    setError(null);
+    setFeedback(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/broadcasts`, {
+        method: "POST",
+        headers: { ...authHeaders(initData), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message,
+          audience: broadcastAudience,
+          role_codes: broadcastRoleCodes,
+          scheduled_at: broadcastScheduleMode === "later"
+            ? new Date(broadcastScheduledAt).toISOString()
+            : null,
+          disable_link_preview: broadcastDisablePreview,
+        }),
+      });
+      if (!response.ok) {
+        setError(`Не удалось создать рассылку: ${await getApiError(response)}`);
+        return;
+      }
+      const created: BroadcastItem = await response.json();
+      setBroadcasts((current) => [created, ...current]);
+      setBroadcastMessage("");
+      setFeedback(
+        broadcastScheduleMode === "now"
+          ? `Рассылка №${created.id} поставлена в очередь.`
+          : `Рассылка №${created.id} запланирована.`,
+      );
+    } finally {
+      setBroadcastSubmitting(false);
+    }
+  }
+
+  async function cancelBroadcast(item: BroadcastItem) {
+    if (!window.confirm(`Отменить рассылку №${item.id}?`)) return;
+    setError(null);
+    setFeedback(null);
+    const response = await fetch(`${apiBaseUrl}/broadcasts/${item.id}/cancel`, {
+      method: "POST",
+      headers: authHeaders(initData),
+    });
+    if (!response.ok) {
+      setError(`Не удалось отменить рассылку: ${await getApiError(response)}`);
+      return;
+    }
+    const updated: BroadcastItem = await response.json();
+    setBroadcasts((current) => current.map((broadcast) => (
+      broadcast.id === updated.id ? updated : broadcast
+    )));
+    setFeedback(`Рассылка №${item.id} отменена.`);
+  }
+
   const selectedTopic = topics.find((topic) => topic.id === selectedTopicId) ?? null;
-  const hasFullAccess = currentAdmin?.role === "owner" || currentAdmin?.role === "admin";
   const botMessageCategories = Array.from(new Set(botMessages.map((item) => item.category)));
   const previewApplication = previewFile
     ? applications.find((application) => application.id === previewFile.applicationId) ?? null
@@ -1437,6 +1684,9 @@ function App() {
             </span>
           )}
         </button>
+        {hasFullAccess && <button className={activeTab === "broadcasts" ? "active" : ""} onClick={() => setActiveTab("broadcasts")}>
+          <Megaphone size={18} /> Рассылка
+        </button>}
         {hasFullAccess && <button className={activeTab === "settings" ? "active" : ""} onClick={() => setActiveTab("settings")}>
           <Settings size={18} /> Настройки
         </button>}
@@ -1472,6 +1722,15 @@ function App() {
               </button>
             ))}
           </div>
+          <label className="participant-search application-search">
+            <Search size={18} />
+            <input
+              type="search"
+              placeholder="Имя, @username, Telegram ID или # заявки"
+              value={applicationSearch}
+              onChange={(event) => setApplicationSearch(event.target.value)}
+            />
+          </label>
           <div className="application-queue">
             <div className="compact-application-head">
               <span>Заявка</span><span>Пользователь</span><span>Направление</span><span>Ответы и работы</span><span>Действия</span>
@@ -1767,6 +2026,172 @@ function App() {
               );
             })}
             {supportTickets.length === 0 && <div className="empty">Обращений пока нет.</div>}
+          </div>
+        </section>
+      )}
+
+      {activeTab === "broadcasts" && hasFullAccess && (
+        <section className="section-content">
+          <div className="section-heading">
+            <div><h2>Рассылка</h2><p>Сообщения пользователям бота</p></div>
+            <span className="count">{broadcasts.length}</span>
+          </div>
+
+          <div className="broadcast-compose">
+            <div className="broadcast-message-editor">
+              <label>
+                <span>Сообщение</span>
+                <textarea
+                  maxLength={4096}
+                  rows={8}
+                  placeholder="Текст сообщения"
+                  value={broadcastMessage}
+                  onChange={(event) => setBroadcastMessage(event.target.value)}
+                />
+              </label>
+              <div className="broadcast-editor-meta">
+                <span>{broadcastMessage.length} / 4096</span>
+                <label className="broadcast-toggle">
+                  <input
+                    type="checkbox"
+                    checked={broadcastDisablePreview}
+                    onChange={(event) => setBroadcastDisablePreview(event.target.checked)}
+                  />
+                  <span className="check-box">{broadcastDisablePreview && <Check size={15} />}</span>
+                  Без предпросмотра ссылок
+                </label>
+              </div>
+            </div>
+
+            <div className="broadcast-targeting">
+              <div className="broadcast-field">
+                <span>Аудитория</span>
+                <div className="broadcast-segments">
+                  {(Object.keys(broadcastAudienceLabels) as BroadcastAudience[]).map((audience) => (
+                    <button
+                      className={broadcastAudience === audience ? "active" : ""}
+                      key={audience}
+                      onClick={() => setBroadcastAudience(audience)}
+                    >
+                      {broadcastAudienceLabels[audience]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="broadcast-field">
+                <span>Роли</span>
+                <div className="role-choice-grid broadcast-role-grid">
+                  {roles.map((role) => {
+                    const checked = broadcastRoleCodes.includes(role.code);
+                    return (
+                      <label className={checked ? "selected" : ""} key={role.code}>
+                        <input type="checkbox" checked={checked} onChange={() => toggleBroadcastRole(role.code)} />
+                        <span className="check-box">{checked && <Check size={15} />}</span>
+                        <span>{role.title}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                {broadcastRoleCodes.length > 0 && (
+                  <button className="broadcast-clear-roles" onClick={() => setBroadcastRoleCodes([])}>
+                    Сбросить роли
+                  </button>
+                )}
+              </div>
+
+              <div className="broadcast-field">
+                <span>Отправка</span>
+                <div className="broadcast-schedule-row">
+                  <div className="broadcast-segments compact">
+                    <button className={broadcastScheduleMode === "now" ? "active" : ""} onClick={() => setBroadcastScheduleMode("now")}>
+                      Сейчас
+                    </button>
+                    <button className={broadcastScheduleMode === "later" ? "active" : ""} onClick={() => setBroadcastScheduleMode("later")}>
+                      <Clock size={15} /> Запланировать
+                    </button>
+                  </div>
+                  {broadcastScheduleMode === "later" && (
+                    <input
+                      type="datetime-local"
+                      value={broadcastScheduledAt}
+                      onChange={(event) => setBroadcastScheduledAt(event.target.value)}
+                    />
+                  )}
+                </div>
+              </div>
+
+              <div className="broadcast-submit-row">
+                <div className="broadcast-recipient-count">
+                  <span>Получателей</span>
+                  <strong>{broadcastAudienceCount ?? "—"}</strong>
+                </div>
+                <button disabled={!broadcastMessage.trim()} onClick={sendBroadcastTest}>
+                  <Send size={16} /> Тест себе
+                </button>
+                <button
+                  className="save-permissions broadcast-primary"
+                  disabled={broadcastSubmitting || !broadcastMessage.trim() || !broadcastAudienceCount}
+                  onClick={createBroadcast}
+                >
+                  <Megaphone size={17} />
+                  {broadcastScheduleMode === "now" ? "Отправить" : "Запланировать"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="broadcast-history-heading">
+            <div><h3>История</h3><p>Последние 100 рассылок</p></div>
+            <button className="icon-button" onClick={() => loadBroadcasts()} title="Обновить историю" aria-label="Обновить историю">
+              <RefreshCw size={17} />
+            </button>
+          </div>
+          <div className="broadcast-history">
+            <div className="broadcast-row broadcast-table-head">
+              <span>Рассылка</span><span>Сообщение</span><span>Аудитория</span><span>Доставка</span><span>Статус</span><span></span>
+            </div>
+            {broadcasts.map((item) => {
+              const creatorName = [item.created_by.first_name, item.created_by.last_name]
+                .filter(Boolean)
+                .join(" ")
+                || (item.created_by.username ? `@${item.created_by.username}` : `ID ${item.created_by.telegram_id}`);
+              const roleNames = item.role_codes
+                .map((code) => roles.find((role) => role.code === code)?.title ?? code)
+                .join(", ");
+              return (
+                <div className="broadcast-row" key={item.id}>
+                  <div className="broadcast-id">
+                    <strong>#{item.id}</strong>
+                    <span>{formatApplicationDate(item.created_at)}</span>
+                  </div>
+                  <div className="broadcast-message-preview" title={item.message}>
+                    <strong>{item.message}</strong>
+                    <span>{creatorName}</span>
+                  </div>
+                  <div className="broadcast-audience-summary">
+                    <strong>{broadcastAudienceLabels[item.audience]}</strong>
+                    <span>{roleNames || "Все роли"}</span>
+                  </div>
+                  <div className="broadcast-delivery">
+                    <strong>{item.sent_count} / {item.target_count}</strong>
+                    <span>{item.failed_count > 0 ? `Ошибок: ${item.failed_count}` : "Без ошибок"}</span>
+                  </div>
+                  <div className={`broadcast-status ${item.status}`}>
+                    <strong>{broadcastStatusLabels[item.status]}</strong>
+                    <span>{formatApplicationDate(item.scheduled_at)}</span>
+                  </div>
+                  <div className="broadcast-actions">
+                    {item.status === "scheduled" && (
+                      <button className="icon-button danger-icon" onClick={() => cancelBroadcast(item)} title="Отменить рассылку" aria-label="Отменить рассылку">
+                        <XCircle size={16} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            {broadcasts.length === 0 && <div className="empty">Рассылок пока нет.</div>}
           </div>
         </section>
       )}

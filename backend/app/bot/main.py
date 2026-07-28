@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from contextlib import suppress
 
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
@@ -8,6 +9,7 @@ from app.bot.handlers import application, membership, moderation, start, support
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.services.bootstrap import seed_defaults
+from app.services.broadcast_service import run_broadcast_worker
 from app.services.participant_tracking import (
     GroupParticipantTrackingMiddleware,
     track_telegram_users,
@@ -48,7 +50,13 @@ async def main() -> None:
     dp.include_router(application.router)
     dp.include_router(membership.router)
     dp.include_router(moderation.router)
-    await dp.start_polling(bot)
+    broadcast_worker = asyncio.create_task(run_broadcast_worker(bot))
+    try:
+        await dp.start_polling(bot)
+    finally:
+        broadcast_worker.cancel()
+        with suppress(asyncio.CancelledError):
+            await broadcast_worker
 
 
 if __name__ == "__main__":
