@@ -2427,6 +2427,13 @@ textarea {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .compact-text-answer strong {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
   .audio-player-dock {
     bottom: 8px;
     width: calc(100% - 16px);
