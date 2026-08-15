@@ -643,6 +643,9 @@ textarea {
 .compact-text-answer span,
 .compact-text-answer strong {
   display: block;
+}
+
+.compact-text-answer span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -658,6 +661,8 @@ textarea {
   color: #dedede;
   font-size: 11px;
   font-weight: 500;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .compact-work-files {
@@ -2425,13 +2430,6 @@ textarea {
 
   .compact-work-files {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .compact-text-answer strong {
-    overflow: visible;
-    text-overflow: clip;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
   }
 
   .audio-player-dock {
