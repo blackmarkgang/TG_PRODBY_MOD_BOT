@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -17,6 +18,7 @@ from app.api.routes import (
     whitelist,
 )
 from app.core.config import settings
+from app.db.models import AuditLog
 from app.db.session import SessionLocal
 from app.services.bootstrap import seed_defaults
 
@@ -25,6 +27,16 @@ from app.services.bootstrap import seed_defaults
 async def lifespan(app: FastAPI):
     async with SessionLocal() as session:
         await seed_defaults(session)
+        session.add(
+            AuditLog(
+                action="deployment_started",
+                entity_type="system",
+                payload_json={
+                    "build": os.getenv("APP_BUILD_MARKER", "development"),
+                },
+            )
+        )
+        await session.commit()
     yield
 
 

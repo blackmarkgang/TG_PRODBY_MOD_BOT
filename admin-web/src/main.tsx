@@ -298,6 +298,7 @@ const fileTypeLabels: Record<string, string> = {
 };
 
 const auditActionLabels: Record<string, string> = {
+  deployment_started: "Новая версия приложения запущена",
   approve: "Заявка одобрена",
   annul_application: "Заявка аннулирована",
   reject: "Заявка отклонена",
