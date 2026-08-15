@@ -1,4 +1,8 @@
+ARG APP_BUILD_MARKER=full-application-answers-20260815-v3
+
 FROM node:24-alpine AS build
+
+ARG APP_BUILD_MARKER
 
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -7,10 +11,18 @@ RUN npm ci
 COPY . .
 ARG VITE_API_BASE_URL=/api
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
-RUN npm run build
+RUN echo "ADMIN-WEB BUILD: ${APP_BUILD_MARKER}" \
+    && npm run build \
+    && printf '%s\n' "${APP_BUILD_MARKER}" > dist/build-info.txt
 
 FROM nginx:1.27-alpine
+
+ARG APP_BUILD_MARKER
+ENV APP_BUILD_MARKER=$APP_BUILD_MARKER
+
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 
 EXPOSE 80
+
+CMD ["sh", "-c", "echo \"ADMIN-WEB START: ${APP_BUILD_MARKER}\" && exec nginx -g 'daemon off;'"]
